@@ -7,7 +7,7 @@ library(jsonlite)
 library(xml2)
 
 # API Key and URL
-api_key <- "b087272afee242b0a1d6eb56e657a857"
+api_key <- "KEY"
 url <- "https://open.assembly.go.kr/portal/openapi/npffdutiapkzbfyvr?UNIT_CD=100020"
 
 # API request
@@ -69,5 +69,9 @@ legislators %>% group_by(congress, pr) %>% summarize(female = sum(gender=="여",
   pivot_wider(names_from = pr, values_from = female) %>%
   print(n = 100)
 
+
+##------------------
+### applicant data
+##------------------
 
 
