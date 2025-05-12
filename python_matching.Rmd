@@ -1,0 +1,28 @@
+---
+title: "matching districts"
+author: "Heewon Yoon"
+date: "2025-05-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(reticulate)
+#use_python("/usr/local/bin/python3", required = TRUE)  
+use_virtualenv("r-linktransformer", required = TRUE)
+```
+
+```{r}
+py_install("linktransformer")
+```
+
+```{python}
+import linktransformer as lt
+import pandas as pd
+import os
+
+df1 = pd.read_csv("data.csv")
+df2 = pd.read_csv("app_d.csv")
+
+df_lm_matched = lt.merge(df1, df2, merge_type='1:m', model="all-MiniLM-L6-v2", left_on="district_d", right_on="district_d")
+df_lm_matched.to_csv("df_lm_matched.csv", index=False)
+```
