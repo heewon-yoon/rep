@@ -29,6 +29,8 @@ json_data <- fromJSON(content)
 
 library(tidyverse)
 library(stringr)
+library(readxl)
+
 
 data_list <- list()
 
@@ -47,7 +49,6 @@ pol <- do.call(rbind, data_list) %>%
          province = str_split_fixed(district, " ", 2)[,1],
          district = str_split_fixed(district, " ", 2)[,2])
 
-library(readxl)
 
 pol22 <- read_excel("legislator22.xlsx") %>% select(-1) %>%
   `colnames<-`(c("congress", "name", "party", "committee", "district", "gender", "tenure", "pr")) %>%
@@ -66,7 +67,10 @@ elections <- data.frame(
 
 # congress 11-22
 leg <- bind_rows(pol, pol22) %>% left_join(elections, by="congress") %>% 
-  mutate(birth_year = substr(dob, 1, 4),
+  mutate(birth_year = as.integer(substr(dob, 1, 4)),
+         birth_year = case_when(birth_year > 2000 ~ birth_year - 100,
+                                birth_year < 1900 ~ birth_year + 100,
+                                TRUE ~ birth_year),
          tenure = case_when(tenure == "초선" ~ "1선",
                             tenure == "재선" ~ "2선",
                             TRUE ~ tenure),
@@ -76,7 +80,6 @@ leg <- bind_rows(pol, pol22) %>% left_join(elections, by="congress") %>%
          female = case_when(gender == "여" ~ 1,
                             gender == "남" ~ 0),
          province = ifelse(province %in% c("null",""), NA, province)) %>%
-  select(year, congress, province, district, pr, party, name, age, female, tenure) %>%
   mutate(province = case_when(province %in% c("강원", "강원도") ~ "gw",
                               province %in% c("경기", "경기도") ~ "gg",
                               province %in% c("경남", "경상남도") ~ "gn",
@@ -94,17 +97,200 @@ leg <- bind_rows(pol, pol22) %>% left_join(elections, by="congress") %>%
                               province %in% c("제주", "제주도") ~ "jj",
                               province %in% c("충남", "충청남도") ~ "cn",
                               province %in% c("충북", "충청북도") ~ "cb",
-                              province %in% c("비례(열)", "비례(한)", "비례대표", "비례대표(신한국당)", "전국구") ~ ""))
+                              province %in% c("비례(열)", "비례(한)", "비례대표", "비례대표(신한국당)", "전국구") ~ "")) %>%
+  select(year, congress, province, district, pr, party, name, birth_year, age, female, tenure) %>%
+  arrange(congress) %>% group_by(name, birth_year) %>% mutate(tenure2 = row_number()) %>% ungroup() %>%
+  mutate(tenure2 = ifelse(congress == 22, tenure, tenure2))
+
+leg22 <- read_excel("국회의원현황22.xlsx", sheet = 2) %>% select(congress, name, dob) %>%
+  mutate(birth_year = as.integer(substr(dob, 1, 4)),
+         age = 2024 - birth_year) %>%
+  right_join(leg %>% filter(year == 2024), by = c("congress", "name")) %>%
+  select(-c(birth_year.y, age.y, dob)) %>% rename(birth_year = birth_year.x,
+                                             age = age.x)
+
+leg <- leg %>% filter(congress < 22) %>% bind_rows(., leg22) %>%
+  mutate(party_cons = case_when(congress == 22 & party == "국민의힘" ~ 1,
+                            congress == 21 & party == "미래통합당" ~ 1,
+                            congress == 20 & party == "새누리당" ~ 1,
+                            congress == 19 & party == "새누리당" ~ 1,
+                            congress == 18 & party == "한나라당" ~ 1,
+                            congress == 17 & party == "한나라당" ~ 1,
+                            congress == 16 & party == "한나라당" ~ 1,
+                            congress == 15 & party == "신한국당" ~ 1,
+                            congress == 14 & party == "민주자유당" ~ 1,
+                            congress == 13 & party == "민주정의당" ~ 1,
+                            congress == 12 & party == "민주정의당" ~ 1,
+                            congress == 11 & party == "민주정의당" ~ 1,
+                            congress == 22 & party == "더불어민주당" ~ 0,
+                            congress == 21 & party == "더불어민주당" ~ 0,
+                            congress == 20 & party == "더불어민주당" ~ 0,
+                            congress == 19 & party == "민주통합당" ~ 0,
+                            congress == 18 & party == "통합민주당" ~ 0,
+                            congress == 17 & party == "열린우리당" ~ 0,
+                            congress == 16 & party == "새천년민주당" ~ 0,
+                            congress == 15 & party == "새정치국민회의" ~ 0,
+                            congress == 14 & party == "민주당" ~ 0,
+                            congress == 13 & party == "평화민주당" ~ 0,
+                            congress == 12 & party == "신한민주당" ~ 0,
+                            congress == 11 & party == "민주한국당" ~ 0,
+                            TRUE ~ NA),
+         party_cons = as.factor(party_cons))
+
+##------------------
+### descriptive
+##------------------
+
+## FEMALE
 
 # percentage of women legislators across years by district/pr
-leg %>% group_by(congress, pr) %>% summarize(female.pct = sum(gender=="여", is.na=T)/n()*100, .groups = "drop") %>%
-  pivot_wider(names_from = pr, values_from = female.pct) %>%
-  print(n = 100)
 
-leg %>% group_by(congress, pr) %>% summarize(female = sum(gender=="여", is.na=T), .groups = "drop") %>%
-  pivot_wider(names_from = pr, values_from = female) %>%
-  print(n = 100)
+fem <- leg %>%
+  filter(!is.na(party_cons)) %>%
+  group_by(congress, pr, party_cons) %>%
+  summarize(female.pct = sum(female == 1, na.rm = TRUE) / n() * 100, .groups = "drop") %>%
+  mutate(pr = as.character(pr))
 
+fem_total <- leg %>%
+  filter(!is.na(party_cons)) %>%
+  group_by(congress, party_cons) %>%
+  summarize(pr = "pooled", female.pct = sum(female == 1, na.rm = TRUE) / n() * 100, .groups = "drop")
+
+fem_all <- bind_rows(fem, fem_total)
+
+ggplot(fem_all, aes(x = congress, y = female.pct, color = pr, group = pr)) +
+  geom_line(size = 1) +
+  geom_point() +
+  geom_vline(xintercept = 17, linetype = "dashed", color = "red", size = 0.3) + 
+  scale_x_continuous(breaks = seq(min(fem_all$congress), max(fem_all$congress), by = 1)) +
+  scale_color_manual(
+    values = c("0" = "steelblue", "1" = "darkorange", "pooled" = "gray30"),
+    labels = c("0" = "Non-PR", "1" = "PR", "pooled" = "Pooled")
+  ) +
+  labs(
+    x = "Congress",
+    y = "Percentage Female",
+    color = "PR Status",
+    title = "Percentage of Female Legislators by PR Status and Party"
+  ) +
+  facet_wrap(~ party_cons, labeller = as_labeller(c("0" = "Liberal", "1" = "Conservative"))) +
+  theme_minimal()
+
+
+# perc of female by party
+fem_party <- leg %>%
+  group_by(congress, party_cons) %>%
+  summarize(female.pct = mean(female == 1, na.rm = TRUE) * 100, .groups = "drop")
+
+ggplot(fem_party %>% filter(!is.na(party_cons)), aes(x = congress, y = female.pct, group = party_cons, color = party_cons)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(
+    x = "Congress",
+    y = "Percentage of Women Legislators",
+    title = "Women Legislators by Party and Congress"
+  ) +
+  scale_color_manual(
+    values = c("0" = "steelblue", "1" = "darkred"),
+    labels = c("0" = "Lib", "1" = "Cons")
+  ) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 12)) +
+  geom_vline(xintercept = 17, linetype = "dashed", color = "gray40") +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 10))
+
+## AGE
+
+# distribution of age across years
+ggplot(leg, aes(x=age)) + 
+  geom_histogram(binwidth = 5, 
+                 fill    = "steelblue", 
+                 color   = "white") + 
+  facet_wrap(~congress) +
+  labs(
+    title = "Distribution of Age Across Years",
+    x = "Age",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# under 40
+# 24년 민주당 총선 기준 45세 가산점
+# 24년 국힘 총선 34세 20% 가산점 / 45세 15% 가산점
+leg %>% group_by(congress) %>% summarize(num_50 = sum(age<50, na.rm=T),
+                                         pct_50 = sum(age<50, na.rm=T)/n()*100,
+                                         num_45 = sum(age<45, na.rm=T),
+                                         pct_45 = sum(age<45, na.rm=T)/n()*100,
+                                         num_40 = sum(age<40, na.rm=T),
+                                         pct_40 = sum(age<40, na.rm=T)/n()*100,
+                                         num_35 = sum(age<35, na.rm=T),
+                                         pct_35 = sum(age<35, na.rm=T)/n()*100)
+
+age_plot <- function(df, threshold) {
+  
+  # by party
+  age <- df %>%
+    group_by(congress, party_cons) %>%
+    summarize(pct = mean(age < threshold, na.rm = TRUE) * 100, .groups = "drop")
+  
+  # pooled
+  pooled <- df %>%
+    group_by(congress) %>%
+    summarize(pct = mean(age < threshold, na.rm = TRUE) * 100, .groups = "drop") %>%
+    mutate(party_cons = "pooled")
+  
+  # combine
+  age_data <- bind_rows(age, pooled) %>% drop_na(party_cons)
+  
+  # plot
+  ggplot(age_data, aes(x = congress, y = pct, color = party_cons)) +
+    geom_line(size = 1) +
+    geom_point(size = 2) +
+    scale_x_continuous(breaks = pretty(unique(df$congress), n = 10)) +
+    labs(
+      title = paste0("Percentage of Politicians Under Age ", threshold, " by Party"),
+      x = "Congress",
+      y = paste0("Percent Under ", threshold),
+      color = "Party"
+    ) +
+    theme_minimal()
+}
+
+age_plot(leg, 35)
+age_plot(leg, 40)
+age_plot(leg, 45)
+age_plot(leg, 50)
+
+# by district/pr
+age_plot_pr <- function(df, threshold) {
+  
+  # calculate percentage
+  age_pr <- df %>%
+    group_by(congress, pr) %>%
+    summarize(
+      pct_under = mean(age < threshold, na.rm = TRUE) * 100,
+      .groups = "drop"
+    ) %>%
+    mutate(pr_label = ifelse(pr == 1, "pr", "district"))
+  
+  # plot
+  ggplot(age_pr, aes(x = congress, y = pct_under, color = pr_label)) +
+    geom_line(size = 1) +
+    geom_point(size = 2) +
+    scale_x_continuous(breaks = pretty(unique(df$congress), n = 10)) +
+    labs(
+      title = paste0("Percentage of Politicians Under Age ", threshold, " by pr/district"),
+      x = "Congress",
+      y = paste0("Percent Under ", threshold),
+      color = "PR/District"
+    ) +
+    theme_minimal()
+}
+
+age_plot_pr(leg, 35)
+age_plot_pr(leg, 40)
+age_plot_pr(leg, 45)
+age_plot_pr(leg, 50)
 
 ##------------------
 ### applicant data
@@ -363,20 +549,28 @@ data <- data %>% mutate(mar_cont = ifelse(is.na(vs_1)==F & is.na(w_margin_1)==T,
                         mar_cont = mar_cont/100,
                         mar_cont2 = mar_cont2/100)
 
-## merge
-
-data$district_d <- paste0(data$congress, data$province, data$district)
-app_d$district_d <- paste0(app_d$congress, app_d$province, app_d$district)
-
-#write.csv(data, "data.csv")
-#write.csv(app_d, "app_d.csv")
-
-anti_join(data, app_d, by = c("congress", "province", "district", "party")) %>% filter(congress == 19) %>% select(province, district)
-anti_join(app_d, data, by = c("congress", "province", "district", "party")) %>% filter(congress == 19) %>% select(province, district)
-
-
 ##------------------
-### check merged data
+### match districts
 ##------------------
 
-data_fuz <- read.csv("df_lm_matched.csv")
+data_match <- data %>% distinct(congress, province, district)
+app_match <- app_d %>% distinct(congress, province, district)
+
+#library(writexl)
+#write_xlsx(app_match, "app_match.xlsx")
+#anti_join(app_match, data_match, by = c("congress", "province", "district")) %>% print(n=Inf)
+#manually matched districts for data_match, app_match as district_data_match
+
+#attempt to fuzzy match the district using linktransformer in python
+#data_fuz <- read.csv("df_lm_matched.csv")
+
+app_d <- read_excel("/Users/hyoon/Desktop/Yoon2/korea data/rep/app_match.xlsx") %>% 
+  mutate(district_data_match = ifelse(is.na(district_data_match), district, district_data_match)) %>% 
+  right_join(app_d, by=c("year", "congress", "province", "district"))
+
+merge <- left_join(data, app_d,
+          by = c("congress", "province", "district"="district_data_match", "party")) %>%
+  mutate(win = ifelse(is.na(w_margin_1), 0, 1))
+
+
+
