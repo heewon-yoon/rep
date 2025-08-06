@@ -12,6 +12,32 @@ use_virtualenv("r-linktransformer", required = TRUE)
 ```
 
 ```{r}
+##------------------
+### match districts
+##------------------
+
+data_match <- data %>% distinct(congress, province, district)
+app_match <- app_d %>% distinct(congress, province, district)
+
+#library(writexl)
+#write_xlsx(app_match, "app_match.xlsx")
+#anti_join(app_match, data_match, by = c("congress", "province", "district")) %>% print(n=Inf)
+#manually matched districts for data_match, app_match as district_data_match
+
+#attempt to fuzzy match the district using linktransformer in python
+#data_fuz <- read.csv("df_lm_matched.csv")
+
+app_d <- read_excel("/Users/hyoon/Desktop/Yoon2/korea data/rep/app_match.xlsx") %>% 
+  mutate(district_data_match = ifelse(is.na(district_data_match), district, district_data_match)) %>% 
+  right_join(app_d, by=c("year", "congress", "province", "district"))
+
+merge <- left_join(data, app_d,
+          by = c("congress", "province", "district"="district_data_match", "party")) %>%
+  mutate(win = ifelse(is.na(w_margin_1), 0, 1))
+```
+
+
+```{r}
 py_install("linktransformer")
 ```
 
@@ -24,5 +50,7 @@ df1 = pd.read_csv("data.csv")
 df2 = pd.read_csv("app_d.csv")
 
 df_lm_matched = lt.merge(df1, df2, merge_type='1:m', model="all-MiniLM-L6-v2", left_on="district_d", right_on="district_d")
-df_lm_matched.to_csv("df_lm_matched.csv", index=False)
+#df_lm_matched.to_csv("df_lm_matched.csv", index=False)
+
+df_exact = pd.merge(df1, df2, on=["congress", "province", "party"])
 ```

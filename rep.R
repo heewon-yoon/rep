@@ -23,9 +23,9 @@ content <- content(res, as = "text", encoding = "UTF-8")
 json_data <- fromJSON(content)
 
 
-##------------------
-### legislator data
-##------------------
+##-----------------------------
+### LEGISLATOR DATA 1981-2024
+##-----------------------------
 
 library(tidyverse)
 library(stringr)
@@ -111,10 +111,10 @@ leg22 <- read_excel("국회의원현황22.xlsx", sheet = 2) %>% select(congress,
 
 leg <- leg %>% filter(congress < 22) %>% bind_rows(., leg22) %>%
   mutate(party_cons = case_when(congress == 22 & party == "국민의힘" ~ 1,
-                            congress == 21 & party == "미래통합당" ~ 1,
-                            congress == 20 & party == "새누리당" ~ 1,
+                            congress == 21 & party %in% c("미래통합당","국민의힘") ~ 1,
+                            congress == 20 & party%in% c("새누리당","국민의당","미래통합당") ~ 1,
                             congress == 19 & party == "새누리당" ~ 1,
-                            congress == 18 & party == "한나라당" ~ 1,
+                            congress == 18 & party %in% c("한나라당","새누리당") ~ 1,
                             congress == 17 & party == "한나라당" ~ 1,
                             congress == 16 & party == "한나라당" ~ 1,
                             congress == 15 & party == "신한국당" ~ 1,
@@ -126,7 +126,7 @@ leg <- leg %>% filter(congress < 22) %>% bind_rows(., leg22) %>%
                             congress == 21 & party == "더불어민주당" ~ 0,
                             congress == 20 & party == "더불어민주당" ~ 0,
                             congress == 19 & party == "민주통합당" ~ 0,
-                            congress == 18 & party == "통합민주당" ~ 0,
+                            congress == 18 & party %in% c("통합민주당","민주통합당") ~ 0,
                             congress == 17 & party == "열린우리당" ~ 0,
                             congress == 16 & party == "새천년민주당" ~ 0,
                             congress == 15 & party == "새정치국민회의" ~ 0,
@@ -135,71 +135,147 @@ leg <- leg %>% filter(congress < 22) %>% bind_rows(., leg22) %>%
                             congress == 12 & party == "신한민주당" ~ 0,
                             congress == 11 & party == "민주한국당" ~ 0,
                             TRUE ~ NA),
-         party_cons = as.factor(party_cons))
+         party_cons = as.factor(party_cons)) 
+  
 
-##------------------
-### descriptive
-##------------------
+##-----------------------------
+### Descriptive Stats
+## gender
+##-----------------------------
 
-## FEMALE
+leg %>% group_by(congress) %>% summarize(fem_pct = sum(female==1, na.rm=T)/n()*100)
 
-# percentage of women legislators across years by district/pr
+# percentage of female legislators 11-22 congress (pooled)
 
-fem <- leg %>%
-  filter(!is.na(party_cons)) %>%
-  group_by(congress, pr, party_cons) %>%
-  summarize(female.pct = sum(female == 1, na.rm = TRUE) / n() * 100, .groups = "drop") %>%
-  mutate(pr = as.character(pr))
+fem_pool <- leg %>% group_by(congress) %>% summarize(fem_pct = sum(female==1, na.rm=T)/n()*100,
+                                                     fem_pct_main = sum(female == 1 & !is.na(party_cons), na.rm = TRUE)/sum(!is.na(party_cons))*100,
+                                                     fem_pct_non = sum(female == 1 & is.na(party_cons), na.rm = TRUE)/sum(is.na(party_cons))*100) 
 
-fem_total <- leg %>%
-  filter(!is.na(party_cons)) %>%
-  group_by(congress, party_cons) %>%
-  summarize(pr = "pooled", female.pct = sum(female == 1, na.rm = TRUE) / n() * 100, .groups = "drop")
-
-fem_all <- bind_rows(fem, fem_total)
-
-ggplot(fem_all, aes(x = congress, y = female.pct, color = pr, group = pr)) +
-  geom_line(size = 1) +
+ggplot(fem_pool, aes(x = congress, y = fem_pct)) +
+  geom_line() +
   geom_point() +
   geom_vline(xintercept = 17, linetype = "dashed", color = "red", size = 0.3) + 
-  scale_x_continuous(breaks = seq(min(fem_all$congress), max(fem_all$congress), by = 1)) +
-  scale_color_manual(
-    values = c("0" = "steelblue", "1" = "darkorange", "pooled" = "gray30"),
-    labels = c("0" = "Non-PR", "1" = "PR", "pooled" = "Pooled")
-  ) +
+  scale_x_continuous(breaks = seq(min(fem_pool$congress), max(fem_pool$congress), by = 1)) +
   labs(
+#    title = "% of Female Legislators by Congress",
     x = "Congress",
-    y = "Percentage Female",
-    color = "PR Status",
-    title = "Percentage of Female Legislators by PR Status and Party"
-  ) +
-  facet_wrap(~ party_cons, labeller = as_labeller(c("0" = "Liberal", "1" = "Conservative"))) +
+    y = "Female (%)") +
   theme_minimal()
 
+ggsave("pct_years.png", plot = last_plot(),
+      width = 6, height = 4)
 
-# perc of female by party
+# percentage of female legislators 11-22 congress (by party status)
+
+fem_pool_two <- fem_pool %>% pivot_longer(cols = c(fem_pct, fem_pct_main, fem_pct_non), names_to = "type", values_to = "percent")
+
+ggplot(fem_pool_two %>% filter(type != "fem_pct"), aes(x = congress, y = percent, color = type)) +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = 17, linetype = "dashed", color = "red", size = 0.3) + 
+  scale_x_continuous(breaks = seq(min(fem_pool_two$congress), max(fem_pool_two$congress), by = 1)) +
+  labs(
+#    title = "% of Female Legislators by Congress (by Party Status)",
+    x = "Congress",
+    y = "Female (%)",
+    color = "Parties") +
+  scale_color_manual(
+    values = c("fem_pct_main" = "tomato", "fem_pct_non" = "steelblue"),
+    labels = c("fem_pct_main" = "Major Parties", "fem_pct_non" = "Non-major Parties")) + 
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave("pct_years_byparty.png", plot = last_plot(),
+       width = 6, height = 4)
+
+# liberal, conservative
+
 fem_party <- leg %>%
   group_by(congress, party_cons) %>%
   summarize(female.pct = mean(female == 1, na.rm = TRUE) * 100, .groups = "drop")
 
 ggplot(fem_party %>% filter(!is.na(party_cons)), aes(x = congress, y = female.pct, group = party_cons, color = party_cons)) +
-  geom_line(size = 1) +
+  geom_line() +
   geom_point() +
+  geom_vline(xintercept = 17, linetype = "dashed", color = "red", size = 0.3) + 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 12)) +
   labs(
     x = "Congress",
     y = "Percentage of Women Legislators",
-    title = "Women Legislators by Party and Congress"
-  ) +
+    color = "Party",
+#    title = "Women Legislators by Party and Congress"
+) +
   scale_color_manual(
     values = c("0" = "steelblue", "1" = "darkred"),
-    labels = c("0" = "Lib", "1" = "Cons")
-  ) +
-  scale_x_continuous(breaks = scales::pretty_breaks(n = 12)) +
-  geom_vline(xintercept = 17, linetype = "dashed", color = "gray40") +
+    labels = c("0" = "Liberal", "1" = "Conservative")) +
   theme_minimal() +
-  theme(strip.text = element_text(size = 10))
+  theme(legend.position = "bottom")
 
-## AGE
+
+# percentage of female legislators across years by district/pr
+
+# pooled
+
+leg %>% group_by(congress, pr) %>% summarize(fem.pct = sum(female == 1, na.rm = TRUE)/n()* 100, .groups = "drop")
+
+fem_pool2 <- leg %>% group_by(congress, pr) %>% summarize(fem.pct = sum(female == 1, na.rm = TRUE)/n()* 100, .groups = "drop") %>%
+  mutate(pr = as.character(pr))
+
+ggplot(fem_pool2, aes(x=congress, y=fem.pct, color=pr)) + 
+  geom_line() + 
+  geom_point() + 
+  geom_vline(xintercept = 17, linetype = "dashed", color = "red", size = 0.3) + 
+  scale_x_continuous(breaks = seq(min(fem_all$congress), max(fem_all$congress), by = 1)) +
+  scale_color_manual(
+    values = c("0" = "steelblue", "1" = "darkorange"),
+    labels = c("0" = "District", "1" = "PR")) +
+  labs(
+    x = "Congress",
+    y = "Percentage Female",
+    color = "PR Status",
+#    title = "% of Female Legislators by PR Status"
+) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave("pct_years_bypr.png", plot = last_plot(),
+       width = 6, height = 4)
+
+# by party (lib v. cons)
+
+fem2 <- leg %>% group_by(congress, pr, party_cons) %>%
+  summarize(female.pct = sum(female == 1, na.rm = TRUE)/n()* 100, .groups = "drop") %>%
+  mutate(pr = as.character(pr))
+
+#fem_total <- leg %>% group_by(congress, party_cons) %>%
+#  summarize(pr = "pooled", female.pct = sum(female == 1, na.rm = TRUE)/n()*100, .groups = "drop")
+#fem_all <- bind_rows(fem, fem_total)
+
+ggplot(fem2 %>% filter(!is.na(party_cons)), aes(x = congress, y = female.pct, color = pr, group = pr)) +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = 17, linetype = "dashed", color = "red", size = 0.3) + 
+  scale_x_continuous(breaks = seq(min(fem_all$congress), max(fem_all$congress), by = 1)) +
+  scale_color_manual(
+    values = c("0" = "steelblue", "1" = "darkorange"),
+    labels = c("0" = "District", "1" = "PR")) +
+  labs(
+    x = "Congress",
+    y = "Percentage Female",
+    color = "PR Status",
+#    title = "Percentage of Female Legislators by Party"
+) +
+  facet_wrap(~ party_cons, labeller = as_labeller(c("0" = "Liberal", "1" = "Conservative"))) +
+  theme_minimal() + 
+  theme(legend.position = "bottom")
+
+ggsave("pct_years_byprparty.png", plot = last_plot(),
+       width = 6, height = 4)
+
+##-----------------------------
+### Descriptive Stats
+## age
+##-----------------------------
 
 # distribution of age across years
 ggplot(leg, aes(x=age)) + 
@@ -217,6 +293,7 @@ ggplot(leg, aes(x=age)) +
 # under 40
 # 24년 민주당 총선 기준 45세 가산점
 # 24년 국힘 총선 34세 20% 가산점 / 45세 15% 가산점
+
 leg %>% group_by(congress) %>% summarize(num_50 = sum(age<50, na.rm=T),
                                          pct_50 = sum(age<50, na.rm=T)/n()*100,
                                          num_45 = sum(age<45, na.rm=T),
@@ -292,9 +369,10 @@ age_plot_pr(leg, 40)
 age_plot_pr(leg, 45)
 age_plot_pr(leg, 50)
 
-##------------------
-### applicant data
-##------------------
+
+##-----------------------------
+### APPLICANT DATA 2012-2020
+##-----------------------------
 
 mp21 <- read_excel("applicant_list.xlsx", sheet=1) %>% slice(-c(1,2)) %>% select(-1) %>%
   `colnames<-`(c("province", "district", "num.app", "applicant", "exp", "gender", "age", "tenure", "incumbent")) %>% 
@@ -418,45 +496,158 @@ app <- rbind(mp19, mp20, mp21, ppp19, ppp20, ppp21) %>%
                               province == "충북" ~ "cb"),
          congress = case_when(year == 2012 ~ 19,
                               year == 2016 ~ 20,
-                              year == 2020 ~ 21)) 
+                              year == 2020 ~ 21)) %>% 
+  mutate(birth_year = year - age) %>%
+  rename(name = applicant)
 
-# leg: legislator data 1981-2024 (2024 doesn't have age data)
-# app: applicant data 2012-2020 
+# problem: tenure is set to 2024 status
+# need to adjust to the tenure to the year of
+# if i join it with legislator data, i can partially solve this problem
+# but if the applicant who had tenure but didn't get elected that year, there wouldn't be a match
+# also can't tell apart those who held position before 2012 
 
-# applicant in district level
+# clean key variables for matching
 
-app_d <- app %>% group_by(year, congress, province, district, party) %>% summarize(n = n(), 
-                                                         female_pct = sum(female)/n(), 
-                                                         female_count = sum(female), 
-                                                         young_pct = sum(age <= 40)/n(), 
-                                                         young_count = sum(age<=40))
+app <- app %>% mutate(name = name |> 
+                        str_squish() |> 
+                        str_replace_all(" ", "") |> 
+                        stringi::stri_trans_nfc(),
+                      birth_year = as.integer(birth_year),
+                      year = as.integer(year))
 
-# age distribution
-ggplot(app, aes(x = age)) +
-  geom_histogram() + facet_grid(year ~ party)
+leg <- leg %>% mutate(name = name |> 
+                        str_squish() |> 
+                        str_replace_all(" ", "") |> 
+                        stringi::stri_trans_nfc(),
+                      birth_year = as.integer(birth_year),
+                      year = as.integer(year))
 
-app %>% group_by(party, year) %>% summarize(young.num = sum(age <= 40, na.rm=T),
-                                            young.pct = sum(age <= 40, na.rm=T)/n()*100,
-                                            female.num = sum(female == 1, na.rm=T),
-                                            female.pct = sum(female == 1, na.rm=T)/n()*100)
+# join with legislator data and pull the tenure of the prior election year if they held office
 
-leg %>% group_by(year) %>% summarize(young.num = sum(age <= 40, na.rm=T),
-                                            young.pct = sum(age <= 40, na.rm=T)/n()*100,
-                                            female.num = sum(female == 1, na.rm=T),
-                                            female.pct = sum(female == 1, na.rm=T)/n()*100) %>%
-  ggplot(., aes(x=year, y=female.pct)) + geom_point() + geom_line()
+library(fuzzyjoin)
 
-leg %>% group_by(year, pr) %>% summarize(female.pct = sum(female==1, na.rm=T)/n()*100) %>% 
-  ggplot(., aes(x=year, y=female.pct, color=as.factor(pr), group=as.factor(pr))) + geom_point() + geom_line()
+app_matched <- app %>% rename(app_year = year) %>% 
+  fuzzy_left_join(
+    leg %>% select(year, name, birth_year, tenure2),
+    by = c("app_year" = "year", "name" = "name", "birth_year" = "birth_year"),
+    match_fun = list(`>`, `==`, ~ abs(.x - .y) <= 1)
+  ) %>%
+  group_by(app_year, name.x, birth_year.x) %>%
+  slice_max(order_by = year, n = 1, with_ties = F, na_rm = F) %>%
+  ungroup()  %>%
+  mutate(tenure_match = tenure2) %>%
+  select(-name.y, -birth_year.y, -year, -tenure2) %>% 
+  rename(
+    name = name.x,
+    birth_year = birth_year.x,
+    year = app_year)
+
+# add matched tenure variable to app dataset
+app_match <- app %>% left_join(app_matched, by = names(app)) %>% relocate(tenure, tenure_match, .after = last_col())
+
+# additionally match for those that didn't match
+# check whether they were elected that year and match for those (then -1 bc they didn't win yet at the moment of application)
+
+nomatch <- app_match %>% filter(is.na(tenure_match) & tenure != 0) %>% 
+  left_join(leg %>% select(year, name, birth_year, tenure2), by = c("year", "name", "birth_year")) %>%
+  mutate(tenure_match_new = tenure2 - 1) %>% select(-tenure2)
+
+app_match2 <- app_match %>% left_join(nomatch, by = names(app_match)) %>% 
+  mutate(tenure_match = if_else(is.na(tenure_match) & tenure != 0, tenure_match_new, tenure_match),
+         tenure_match = ifelse(is.na(tenure_match) & tenure == 0, 0, tenure_match)) %>%
+  select(-tenure_match_new)
+
+# there does seem to be 159 entries that don't match
+# but there are matches that I can identify but didn't get matched (e.g. 주호영, 안상수)
+app_match2 %>% filter(is.na(tenure_match))
+
+# code them as 0
+app2 <- app_match2 %>% mutate(tenure_match = ifelse(is.na(tenure_match), 0, tenure_match))
+
+##-----------------------------
+### Descriptive Stats
+## applicants
+##-----------------------------
+
+# female applicant trend (pooled)
+
+app2 %>%
+  group_by(congress) %>%
+  summarize(pct.fem = sum(female == 1, na.rm = TRUE) / n()) %>%
+  ggplot(aes(x = congress, y = pct.fem)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = seq(min(app2$congress), max(app2$congress), by = 1))
+
+# trend (by party)
+
+app2 %>%
+  group_by(congress, party) %>%
+  summarize(pct.fem = sum(female == 1, na.rm = TRUE) / n(), .groups = "drop") %>%
+  ggplot(aes(x = congress, y = pct.fem, color = party)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = seq(min(app2$congress), max(app2$congress), by = 1))
+
+app2 %>%
+  group_by(congress, party) %>%
+  summarize(pct.fem = sum(female == 1, na.rm = TRUE) / n(), .groups = "drop") %>%
+  ggplot(aes(x = factor(congress), y = pct.fem, fill = party)) +
+  geom_col(position = "dodge", width = 0.5) +
+  scale_fill_manual(
+    values = c("mp" = "#5B9BD5", "ppp" = "#E15759"),
+    labels = c("mp" = "MP", "ppp" = "PPP")
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(x = "Congress", y = "% Female", fill = NULL) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave("app_trend.png", plot = last_plot(),
+       width = 6, height = 4)
+
+# district level female applicants (pooled)
+
+app2_d <- app2 %>% group_by(congress, district) %>% summarize(n = n(), 
+                                                              n.fem = sum(female, na.rm=T),
+                                                              pct.fem = n.fem/n*100)
+
+ggplot(app2_d, aes(x=pct.fem)) + geom_histogram()
+
+ggplot(app2_d, aes(x = pct.fem)) +
+  geom_density(fill = "#5B9BD5", alpha = 0.6) +
+  labs(x = "% Female", y = "Density") +
+  theme_minimal()
+
+ggplot(app2_d, aes(x = n.fem)) + 
+  geom_histogram(fill = "#5B9BD5", binwidth=0.5) + 
+  scale_x_continuous(breaks = seq((min(app2_d$n.fem, na.rm = TRUE)),
+                                  (max(app2_d$n.fem, na.rm = TRUE)), 
+                                  by = 1)) +
+  labs(x = "Number of Female Applicants", y = "Count") +
+  theme_minimal()
 
 
-leg %>% group_by(year, pr) %>% summarize(young.pct = mean(age)) %>% 
-  ggplot(., aes(x=year, y=young.pct, color=as.factor(pr), group=as.factor(pr))) + geom_point() + geom_line()
+# by party
+
+app2 %>% group_by(congress, district, party) %>% summarize(n = n(), 
+                                                    n.fem = sum(female, na.rm=T),
+                                                    pct.fem = n.fem/n*100, .groups = "drop") %>%
+  ggplot(aes(x = n.fem, fill = party)) +
+  geom_histogram(binwidth = 0.5, position = "dodge") +
+  labs(x = "Number of Female Applicants", y = "Count", fill = NULL) +
+  scale_fill_manual(values = c("mp" = "#5B9BD5", "ppp" = "#E15759"),
+                    labels = c("mp" = "MP", "ppp" = "PPP")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave("app_trendcount.png", plot = last_plot(),
+       width = 6, height = 4)
 
 
-##------------------
-### election data
-##------------------
+##-----------------------------
+### ELECTION DATA 1981-2024
+##-----------------------------
 
 data <- read.csv("clean_data2.csv") %>% select(-X) %>% mutate()
 
@@ -549,28 +740,151 @@ data <- data %>% mutate(mar_cont = ifelse(is.na(vs_1)==F & is.na(w_margin_1)==T,
                         mar_cont = mar_cont/100,
                         mar_cont2 = mar_cont2/100)
 
-##------------------
-### match districts
-##------------------
+##-----------------------------
+### Descriptive Stats
+##-----------------------------
 
-data_match <- data %>% distinct(congress, province, district)
-app_match <- app_d %>% distinct(congress, province, district)
+# aggregate applicant data to district level
+app2_d <- app2 %>% group_by(congress, province, district, party) %>% summarize(n = n(), 
+                                                              n.fem = sum(female, na.rm=T),
+                                                              pct.fem = n.fem/n*100,
+                                                              fem_inc = sum(female==1 & incumbent ==1, na.rm=T),
+                                                              inc_race = sum(incumbent == 1, na.rm=T)) %>%
+  mutate(inc_race = ifelse(inc_race > 0, 1, 0))
 
-#library(writexl)
-#write_xlsx(app_match, "app_match.xlsx")
-#anti_join(app_match, data_match, by = c("congress", "province", "district")) %>% print(n=Inf)
-#manually matched districts for data_match, app_match as district_data_match
-
-#attempt to fuzzy match the district using linktransformer in python
-#data_fuz <- read.csv("df_lm_matched.csv")
-
-app_d <- read_excel("/Users/hyoon/Desktop/Yoon2/korea data/rep/app_match.xlsx") %>% 
-  mutate(district_data_match = ifelse(is.na(district_data_match), district, district_data_match)) %>% 
-  right_join(app_d, by=c("year", "congress", "province", "district"))
-
-merge <- left_join(data, app_d,
-          by = c("congress", "province", "district"="district_data_match", "party")) %>%
+# combine applicant data with voting records data
+app_match <- read_excel("/Users/hyoon/Desktop/Yoon2/korea data/rep/app_match.xlsx") %>%
+  rename(district_app = district,
+         district_data = district_data_match) %>% 
+  mutate(district_data = ifelse(is.na(district_data), district_app, district_data)) %>%
+  right_join(app2_d, by = c("congress", "province", "district_app"="district")) %>%
+  right_join(data, by = c("congress", "province", "district_data"="district", "party")) %>%
   mutate(win = ifelse(is.na(w_margin_1), 0, 1))
 
+# add gender of winner
+winner <- leg %>% filter(congress >= 19 & pr == 0) %>% select(congress, province, district, party, female) %>%
+  rename(fem_winner = female) %>% 
+  mutate(party = case_when(congress == 19 & party %in% c("민주통합당", "더불어민주당") ~ "mp",
+                           congress == 19 & party == "새누리당" ~ "ppp",
+                           congress == 20 & party == "더불어민주당" ~ "mp",
+                           congress == 20 & party %in% c("새누리당","국민의당","미래통합당") ~ "ppp",
+                           congress == 21 & party == "더불어민주당" ~ "mp",
+                           congress == 21 & party %in% c("미래통합당","국민의힘") ~ "ppp",
+                           TRUE ~ party)) %>%
+  rename(party_winner = party) %>% distinct()
+
+election <- app_match %>% mutate(district_data = district_data |> 
+                                   str_squish() |> 
+                                   stringi::stri_trans_nfc()) %>% 
+  left_join(winner %>% mutate(district = district |> 
+                                str_squish() |> 
+                                stringi::stri_trans_nfc()), 
+            by=c("congress", "province", "district_data"="district")) %>% 
+  filter(!is.na(district_app))
+
+# distribution of women candidates (pri v. direct)
+
+# pooled
+election %>% group_by(congress, pri2) %>% summarize(n = sum(n, na.rm=T),
+                                                    n_female = sum(n.fem, na.rm=T),
+                                                    pct_female = n_female/n*100, .groups="drop") %>%
+  filter(!is.na(pri2)) %>%
+  ggplot(aes(x = factor(congress), y = pct_female, fill = factor(pri2))) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.5) +
+  labs(
+    x = "Congress",
+    y = "Percent Female Applicants",
+    fill = NULL,
+#    title = "Female Applicant % by Nomination Method and Congress"
+  ) +
+  scale_fill_manual(values = c("0" = "gray70", "1" = "steelblue"),
+                    labels = c("Non-primary", "Primary")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# by party
+election %>% group_by(congress, pri2, party) %>% summarize(n = sum(n, na.rm=T),
+                                                    n_female = sum(n.fem, na.rm=T),
+                                                    pct_female = n_female/n*100, .groups="drop") %>%
+  filter(!is.na(pri2)) %>%
+  ggplot(aes(x = factor(congress), y = pct_female, fill = factor(pri2))) +
+     geom_bar(stat = "identity", position = "dodge") +
+     facet_wrap(~party) +
+     labs(
+         x = "Congress",
+         y = "Percent Female Applicants",
+         fill = "Nomination Method",
+         title = "Female Applicant % by Nomination Method, Party, and Congress"
+       ) +
+     scale_fill_manual(values = c("0" = "gray70", "1" = "steelblue"),
+                                             labels = c("Non-primary", "Primary")) +
+     theme_minimal()
+
+# victory rate of women (pri v. direct)
+
+election %>% filter(n.fem > 0 & !is.na(pri2)) %>% group_by(pri2) %>% summarize(mean = mean(fem_winner, na.rm=T))
+
+# pooled
+election %>%
+  filter(n.fem > 0 & !is.na(pri2)) %>%
+  group_by(pri2, congress) %>%
+  summarize(mean = mean(fem_winner, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = congress, y = mean, color = factor(pri2))) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(
+    values = c("0" = "#999999", "1" = "#0072B2"),
+    labels = c("Non-primary", "Primary"),
+    name = NULL
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 3)) + 
+  labs(
+    x = "Congress",
+    y = "Share of Female Winners",
+#    title = "Female Candidate Success by Nomination Method Over Time"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggsave("election_winrate.png", plot = last_plot(),
+       width = 6, height = 4)
+
+# by party
+
+election %>%
+  filter(n.fem > 0 & !is.na(pri2)) %>%
+  group_by(pri2, congress, party) %>%
+  summarize(mean = mean(fem_winner, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = factor(congress), y = mean, color = factor(pri2), group = pri2)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ party, labeller = labeller(party = c(
+    "mp" = "MP",
+    "ppp" = "PPP"
+  ))) +
+  scale_color_manual(
+    values = c("0" = "#999999", "1" = "#0072B2"),
+    labels = c("Non-primary", "Primary"),
+    name = NULL
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    x = "Congress",
+    y = "Share of Female Winners",
+#    title = "Female Candidate Success by Nomination Method and Party"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+  )
+
+ggsave("election_winratebyparty.png", plot = last_plot(),
+       width = 6, height = 4)
+
+# how big do they win
+# compare voteshare
 
 
+
+# what kind of districts are they nominated in
