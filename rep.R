@@ -564,6 +564,7 @@ app_match2 %>% filter(is.na(tenure_match))
 # code them as 0
 app2 <- app_match2 %>% mutate(tenure_match = ifelse(is.na(tenure_match), 0, tenure_match))
 
+
 ##-----------------------------
 ### Descriptive Stats
 ## applicants
@@ -740,6 +741,99 @@ data <- data %>% mutate(mar_cont = ifelse(is.na(vs_1)==F & is.na(w_margin_1)==T,
                         mar_cont = mar_cont/100,
                         mar_cont2 = mar_cont2/100)
 
+
+##-------------------------
+## add final nominee data (gender)
+##-------------------------
+
+mp <- read_xlsx("/Users/hyoon/Desktop/Yoon2/korea data/rep/elec_mp.xlsx") %>% 
+  rename(congress = elec) %>% arrange(congress, province, district) %>%
+  mutate(n.app = ifelse(is.na(n.app)==T & congress %in% c(19,20), 0, n.app),
+         inc = ifelse(is.na(inc)==T& congress %in% c(19,20), 0, inc)) %>% 
+  mutate(pri1 = case_when(
+    csm %in% c("/단일화경선", "경선", "경선?", "경선(결선)",
+               "경선/단일화경선", "경선공천", "단수후보/단일화경선",
+               "단일화경선", "야권단일화경선", "전략경선", "전략공천/단일화경선") ~ "1",
+    csm %in% c("공천", "단수공천", "단수추천", "단수후보", 
+               "야권연대", "원외단수", "전략검토지역", "전략공천", 
+               "전략선거구", "현역단수") ~ "0",
+    csm %in% c("등록무효", "무공천") ~ NA,
+    TRUE ~ csm),
+    pri2 = case_when( # 단일화는 비경선
+      csm %in% c("경선", "경선?", "경선(결선)",
+                 "경선/단일화경선", "경선공천", "전략경선") ~ "1",
+      csm %in% c("/단일화경선", "공천", "단수공천", "단수추천",
+                 "단수후보", "단수후보/단일화경선", "단일화경선", 
+                 "야권단일화경선", "야권연대", "원외단수", "전략검토지역",
+                 "전략공천", "전략공천/단일화경선", "전략선거구", "현역단수") ~ "0",
+      csm %in% c("등록무효", "무공천") ~ NA,
+      TRUE ~ csm)) %>% 
+  select(-c("source", "rf")) %>% 
+  mutate(across(everything(), ~gsub("\\*", "", .x))) %>%
+  mutate_at(c("congress", "n.app", "pri1", "pri2"), .funs = as.numeric) %>%
+  mutate(party_kor = case_when(
+    congress == 19 ~ "민주통합당",
+    congress == 20 ~ "더불어민주당",
+    congress == 21 ~ "더불어민주당",
+    congress == 22 ~ "더불어민주당")) %>%
+  add_column(party = "mp",
+             party_k22 = "더불어민주당",
+             party_k21 = "더불어민주당",
+             party_k20 = "더불어민주당",
+             party_k19 = "민주통합당",
+             party_k18 = "통합민주당",
+             party_k17 = "열린우리당",
+             party_k16 = "새천년민주당",
+             party_k15 = "새정치국민회의")
+
+ppp <- read_xlsx("/Users/hyoon/Desktop/Yoon2/korea data/rep/elec_ppp.xlsx") %>% 
+  rename(congress = elec) %>% arrange(congress, province, district) %>%
+  mutate(n.app = ifelse(is.na(n.app)==T & congress %in% c(19,20), 0, n.app),
+         inc = ifelse(is.na(inc)==T & congress %in% c(19,20), 0, inc)) %>% 
+  mutate(pri1 = case_when(
+    csm %in% c("경선", "경선(국민참여)", "경선(단독후보)", "경선(여론조사)",
+               "경선공천", "경선단독후보") ~ "1",
+    csm %in% c("공천", "단독공천", "단수공천", "단수추천", "여성우선추천", "국민추천제",
+               "우선추천", "전략공천", "청년공천", "후보자추천", "후보자추천(전략지역)") ~ "0",
+    TRUE ~ csm),
+    pri2 = pri1) %>%
+  select(-c("source", "ref")) %>% 
+  mutate(across(everything(), ~gsub("\\*", "", .x))) %>%
+  mutate_at(c("congress", "n.app", "pri1", "pri2"), .funs = as.numeric) %>%
+  mutate(nominee = case_when(
+    nominee == "X" ~ "NA", 
+    nominee == "김경희(여)" ~ "김경희",
+    nominee == "김희정(여)" ~ "김희정",
+    nominee == "나경원(여)" ~ "나경원",
+    TRUE ~ nominee)) %>%
+  mutate(party_kor = case_when(
+    congress == 19 ~ "새누리당",
+    congress == 20 ~ "새누리당",
+    congress == 21 ~ "미래통합당",
+    congress == 22 ~ "국민의힘")) %>%
+  add_column(party = "ppp",
+             party_k22 = "국민의힘",
+             party_k21 = "미래통합당",
+             party_k20 = "새누리당",
+             party_k19 = "새누리당",
+             party_k18 = "한나라당",
+             party_k17 = "한나라당",
+             party_k16 = "한나라당",
+             party_k15 = "신한국당")
+
+dat <- bind_rows(ppp, mp)
+
+# match with app2 based on name, congressional year, party to bring gender
+dat2 <- dat %>%
+  left_join(
+    app2 %>%
+      arrange(congress, province, party, name) %>%              
+      distinct(congress, province, party, name, .keep_all = TRUE) %>%
+      select(congress, province, party, name, female, age, incumbent, tenure_match),
+    by = c("congress", "province", "party", "nominee" = "name"),
+    relationship = "many-to-one")
+
+
 ##-----------------------------
 ### Descriptive Stats
 ##-----------------------------
@@ -751,6 +845,7 @@ app2_d <- app2 %>% group_by(congress, province, district, party) %>% summarize(n
                                                               fem_inc = sum(female==1 & incumbent ==1, na.rm=T),
                                                               inc_race = sum(incumbent == 1, na.rm=T)) %>%
   mutate(inc_race = ifelse(inc_race > 0, 1, 0))
+
 
 # combine applicant data with voting records data
 app_match <- read_excel("/Users/hyoon/Desktop/Yoon2/korea data/rep/app_match.xlsx") %>%
@@ -781,6 +876,7 @@ election <- app_match %>% mutate(district_data = district_data |>
                                 stringi::stri_trans_nfc()), 
             by=c("congress", "province", "district_data"="district")) %>% 
   filter(!is.na(district_app))
+
 
 # distribution of women candidates (pri v. direct)
 
@@ -886,5 +982,19 @@ ggsave("election_winratebyparty.png", plot = last_plot(),
 # compare voteshare
 
 
-
 # what kind of districts are they nominated in
+# need to identify the gender of the final candidate # 후보자성별  
+
+# metropolitan/urban districts
+# open seat districts
+# safe/swing districts?
+# sacrificial districts?
+
+# leg: legislator data
+# app2: applicant data
+# dat: has final nominee data
+
+# add characteristics of final nominee
+election <- election %>% left_join(dat2 %>% select(congress, province, district, party, nominee, female, age, incumbent, tenure_match),
+                                   by=c("congress", "province", "district_data" = "district", "party"))
+
