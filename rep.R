@@ -188,7 +188,7 @@ ggplot(fem_pool_two %>% filter(type != "fem_pct"), aes(x = congress, y = percent
 ggsave("pct_years_byparty.png", plot = last_plot(),
        width = 6, height = 4)
 
-# liberal, conservative
+# two main parties--liberal, conservative
 
 fem_party <- leg %>%
   group_by(congress, party_cons) %>%
@@ -607,6 +607,20 @@ app2 %>%
 ggsave("app_trend.png", plot = last_plot(),
        width = 6, height = 4)
 
+# number of female legislators
+app2 %>%
+  group_by(congress, party) %>%
+  summarize(n_fem = sum(female == 1, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = factor(congress), y = n_fem, fill = party)) +
+  geom_col(position = "dodge", width = 0.5) +
+  scale_fill_manual(
+    values = c("mp" = "#5B9BD5", "ppp" = "#E15759"),
+    labels = c("mp" = "MP", "ppp" = "PPP")
+  ) +
+  labs(x = "Congress", y = "Number of Female Legislators", fill = NULL) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
 # district level female applicants (pooled)
 
 app2_d <- app2 %>% group_by(congress, district) %>% summarize(n = n(), 
@@ -835,7 +849,7 @@ dat2 <- dat %>%
 
 
 ##-----------------------------
-### Descriptive Stats
+### Add voting data to applicant data
 ##-----------------------------
 
 # aggregate applicant data to district level
@@ -978,23 +992,416 @@ election %>%
 ggsave("election_winratebyparty.png", plot = last_plot(),
        width = 6, height = 4)
 
-# how big do they win
-# compare voteshare
-
-
-# what kind of districts are they nominated in
-# need to identify the gender of the final candidate # 후보자성별  
-
-# metropolitan/urban districts
-# open seat districts
-# safe/swing districts?
-# sacrificial districts?
-
 # leg: legislator data
 # app2: applicant data
 # dat: has final nominee data
 
 # add characteristics of final nominee
 election <- election %>% left_join(dat2 %>% select(congress, province, district, party, nominee, female, age, incumbent, tenure_match),
-                                   by=c("congress", "province", "district_data" = "district", "party"))
+                                   by=c("congress", "province", "district_data" = "district", "party")) 
+
+##-----------------------------
+### Descriptive Stats- where do they run
+##-----------------------------
+
+# using "election" dataset
+# open/incumbent (inc_race)
+# female/male incumbent (fem_inc)
+# safe/swing (avg_vs4, vs_1)
+# dem/rep (party)
+# metro/suburban
+# ruling/non-ruling (ruling)
+# past method (prior.pri2)
+# past electoral performance (past female winner, past number of applicants, district demographics)
+
+
+# binary female applicants districts
+election %>% mutate(fem_district = ifelse(n.fem > 0, 1, 0),
+                    dem_party = ifelse(party == "mp", 1, 0)) %>%
+  group_by(fem_district) %>% 
+  summarise(
+    inc_race = mean(inc_race, na.rm=TRUE),
+    fem_inc = mean(fem_inc, na.rm=TRUE),
+    avg_vs4_p = mean(avg_vs4_p, na.rm=TRUE),
+    vs_1_p = mean(vs_1_p, na.rm=TRUE),
+    dem_party = mean(dem_party, na.rm=TRUE),
+    prior.pri2 = mean(prior.pri2, na.rm=TRUE),
+    ruling = mean(ruling, na.rm=TRUE),
+    n = n()
+  )
+
+# continuous female applicants districts  
+election %>% mutate(dem_party = ifelse(party == "mp", 1, 0)) %>%
+  group_by(n.fem) %>% 
+  summarise(
+    inc_race = mean(inc_race, na.rm=TRUE),
+    fem_inc = mean(fem_inc, na.rm=TRUE),
+    avg_vs4_p = mean(avg_vs4_p, na.rm=TRUE),
+    vs_1_p = mean(vs_1_p, na.rm=TRUE),
+    dem_party = mean(dem_party, na.rm=TRUE),
+    prior.pri2 = mean(prior.pri2, na.rm=TRUE),
+    ruling = mean(ruling, na.rm=TRUE),
+    n = n()
+  )
+
+# plot district characteristics
+
+# by number of applicants (continuous)
+election %>%
+  mutate(dem_party = ifelse(party == "mp", 1, 0)) %>%
+  group_by(n.fem) %>%
+  summarise(
+    inc_race   = mean(inc_race, na.rm = TRUE),
+    fem_inc    = mean(fem_inc, na.rm = TRUE),
+    avg_vs4_p  = mean(avg_vs4_p, na.rm = TRUE),
+    vs_1_p     = mean(vs_1_p, na.rm = TRUE),
+    dem_party  = mean(dem_party, na.rm = TRUE),
+    prior.pri2 = mean(`prior.pri2`, na.rm = TRUE),
+    ruling     = mean(ruling, na.rm = TRUE)
+  ) %>%
+  pivot_longer(-n.fem, names_to = "variable", values_to = "mean_value") %>%
+  mutate(variable = recode(variable,
+                           inc_race   = "Incumbent race",
+                           fem_inc    = "Female incumbent present",
+                           avg_vs4_p  = "Average 4 vote share",
+                           vs_1_p     = "Previous vote share",
+                           dem_party  = "MP (1) vs PPP (0)",
+                           prior.pri2 = "Primary in previous election",
+                           ruling     = "Ruling party district"
+  )) %>%
+  ggplot(aes(x = factor(n.fem), y = mean_value, fill = factor(n.fem))) +
+  geom_col(width = 0.7, show.legend = TRUE) +
+  facet_wrap(~ variable, scales = "free_y") +
+  scale_fill_brewer(palette = "Blues") +
+  theme_minimal(base_size = 13) +
+  labs(
+    x = "Number of female applicants in district",
+    y = "Mean value of district characteristic",
+    title = "District characteristics by number of female applicants",
+    fill = "n.fem"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 0, vjust = 0.5)
+  )
+
+# by number of applicants (binary)
+election %>%
+  mutate(
+    fem_district = ifelse(n.fem > 0, 1, 0),
+    dem_party = ifelse(party == "mp", 1, 0)
+  ) %>%
+  group_by(fem_district) %>%
+  summarise(across(
+    c(inc_race, fem_inc, 
+      #avg_vs4_p,dem_party,
+      vs_1_p,
+      prior.pri2, ruling),
+    \(x) mean(x, na.rm = TRUE)
+  )) %>%
+  pivot_longer(
+    -fem_district,
+    names_to = "variable",
+    values_to = "mean_value"
+  ) %>%
+  mutate(variable = recode(variable,
+                           inc_race   = "Incumbent race",
+                           fem_inc    = "Fem. incumbent race",
+#                           avg_vs4_p  = "Average 4 vote share",
+                           vs_1_p     = "Previous vote share",
+#                           dem_party  = "MP (1) vs PPP (0)",
+                           prior.pri2 = "Past primary",
+                           ruling     = "Ruling party district"
+  )) %>%
+  mutate(variable = factor(variable,
+                      levels = c(
+                        "Ruling party district",
+                        "Incumbent race",
+                        "Fem. incumbent race",
+                        "Previous vote share",
+                        "Past primary"
+                      ))) %>%
+  ggplot(aes(x = factor(fem_district), y = mean_value, fill = factor(fem_district))) +
+  geom_col(width = 0.7, show.legend = TRUE) +
+  facet_wrap(~ variable, scales = "free_y") +
+  scale_fill_manual(
+    values = c("gray70", "steelblue"),
+    labels = c("No female applicant", "≥1 female applicant")
+  ) +
+  labs(
+    x = "District type",
+    y = "Mean value",
+    fill = "",
+#    title = "District characteristics by presence of female applicants"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_blank(),  # removes repetitive x labels (0/1)
+    axis.ticks.x = element_blank(),
+    panel.spacing = unit(1, "lines")
+  )
+
+ggsave("district_character.png", plot = last_plot(),
+       width = 6, height = 4)
+
+##-----------------------------
+### Effect of nomination method
+##-----------------------------
+
+# DV: fem_winner or win == 1 & female == 1
+# IV: pri2
+# population of interest --> female running districts
+
+
+# incumbent applicant (whether they exist, whether it's female)
+# type of district
+
+election %>%
+  filter(n.fem > 0) %>% group_by(pri2) %>% summarize(fem_winner = mean(fem_winner, na.rm=T))
+
+# determine what to examine: pri v. non among women or women v. men or pri/non among women v. among men
+# think about whether representation isn't actually bad -> pct of applicants v. actual representation
+# see if i can get demographic info for districts
+# see if i can get exact voteshare of female winners
+# sample too small? only 340 districts 
+
+# 82 districts with female nominees
+election %>% filter(female == 1) %>% count()
+
+# 43 districts with female winners
+election %>% filter(female == 1 & win == 1) %>% count()
+
+# pri2 == 1 10/25 = 0.4 districts with primary, female nominee. rate of winning
+election %>% filter(female == 1 & pri2 == 1) %>% count()
+election %>% filter(female == 1 & win == 1 & pri2 == 1) %>% count()
+
+# pri2 == 0 33/57 = 0.57 districts with direct, female nominee. rate of winning
+election %>% filter(female == 1 & pri2 == 0) %>% count()
+election %>% filter(female == 1 & win == 1 & pri2 == 0) %>% count()
+
+# men primary 181/405 = 0.44
+election %>% filter(female == 0 & pri2 == 1) %>% count()
+election %>% filter(female == 0 & win == 1 & pri2 == 1) %>% count()
+
+# men non-primary 248/551 = 0.45
+election %>% filter(female == 0 & pri2 == 0) %>% count()
+election %>% filter(female == 0 & win == 1 & pri2 == 0) %>% count()
+
+# compare voteshare
+elec <- read.csv("elec.csv") %>% filter(congress >= 19) 
+election <- election %>% left_join(elec %>% select(congress, province, district, vs_fst, w_margin),
+                                   by= c("congress", "province",
+                                         "district_data" = "district"))
+# vs_fst is voteshare of the winner
+# w_margin is winning margin of the district (first - second)
+# voteshare of winner: vs_fst
+# voteshare of nominee: vs
+
+# margin comparison for primary v. non-primary
+election %>% filter(female == 1 & win == 1) %>% group_by(pri2) %>% summarize(avg = mean(w_margin))
+
+# save file
+library(writexl)
+write_xlsx(election, "election_data_export.xlsx")
+
+
+library(fixest)
+
+main <- feols(win ~ pri2 + inc + vs_1_p + ruling | party + congress,
+  data = election,
+  cluster = ~district_data)
+summary(main)
+
+main_int <- feols(win ~ female*pri2 + inc + vs_1_p + ruling | party + congress,
+                  data = election,
+                  cluster = ~district_data)
+summary(main_int)
+
+main_fem <- feols(win ~ pri2 + inc + vs_1_p + ruling | party + congress,
+                  data = election %>% filter(female == 1),
+                  cluster = ~district_data)
+summary(main_fem)
+
+library(modelsummary)
+
+dir.create("tables", showWarnings = FALSE)
+
+modelsummary(
+  list(
+    "(1) Baseline"    = main,
+    "(2) Female" = main_fem,
+    "(3) Interaction" = main_int
+  ),
+  estimate  = "{estimate}{stars}",
+  statistic = "({std.error})",
+  coef_map = c(
+    "pri2"          = "Primary",
+    "female"        = "Female",
+    "female:pri2"   = "Female × Primary",
+    "inc"           = "Incumbency",
+    "vs_1_p"        = "Previous Voteshare",
+    "ruling"        = "Ruling Party"
+  ),
+  gof_map = c("nobs", "r.squared"),
+  add_rows = data.frame(
+    term   = c("Party FE", "Congress FE"),
+    `(1) Baseline`    = c("Yes", "Yes"),
+    `(2) Female`    = c("Yes", "Yes"),
+    `(3) Interaction` = c("Yes", "Yes")
+  ),
+  notes = "Standard errors clustered at the District level.",
+  output = "tables/nomination_main_int.tex"
+)
+
+# summary stats
+
+election %>%
+  select(pri2, female, win, inc, vs_1_p, ruling) %>% 
+  as.data.frame(.) %>% 
+  stargazer(.,  type = "latex",
+            title = "Summary Statistics",
+            header = F, float = T,
+            summary.stat = c("min","median", "max", "mean", "sd", "n"),
+            font.size = 'footnotesize', 
+            covariate.labels = c("Primary", "Female", "Win Election",
+                                 "Incumbency", "Vote Share (previous)", "Ruling Party"),
+            digits = 2,
+            out = "summary_stats.tex")
+
+
+## plot
+
+dat <- election %>%
+  filter(
+    !is.na(win),
+    !is.na(female),
+    !is.na(pri2),
+    !is.na(inc),
+    !is.na(vs_1_p),
+    !is.na(ruling),
+    !is.na(party),
+    !is.na(congress)
+  )
+
+main_int_lm <- lm(
+  win ~ female * pri2 + inc + vs_1_p + ruling +
+    factor(party) + factor(congress),
+  data = dat)
+
+cov_means <- dat %>%
+  summarise(
+    inc    = mean(inc,    na.rm = TRUE),
+    vs_1_p = mean(vs_1_p, na.rm = TRUE),
+    ruling = mean(ruling, na.rm = TRUE)
+  )
+
+ref_party    <- names(sort(table(dat$party), decreasing = TRUE))[1]
+ref_congress <- max(dat$congress, na.rm = TRUE)
+
+newdat <- expand.grid(
+  female = c(0, 1),
+  pri2   = c(0, 1)
+) %>%
+  bind_cols(cov_means[rep(1, 4), ]) %>%
+  mutate(
+    party    = ref_party,
+    congress = ref_congress
+  )
+
+pred <- predict(main_int_lm, newdata = newdat, se.fit = TRUE)
+
+plot_df <- newdat %>%
+  mutate(
+    fit  = pred$fit,
+    se   = pred$se.fit,
+    lwr  = fit - 1.96 * se,
+    upr  = fit + 1.96 * se,
+    sex_label = ifelse(female == 1, "Female", "Male"),
+    pri_label = ifelse(pri2 == 1, "Primary", "Direct nomination")
+  )
+
+ggplot(plot_df,
+       aes(x = pri_label, y = fit,
+           color = sex_label, group = sex_label)) +
+  geom_point(size = 3) +
+  geom_line(aes(group = 1)) +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.12) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  facet_wrap(~ sex_label) +
+  scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+  labs(
+    x = "Nomination method",
+    y = "Predicted probability of winning",
+    color = "Gender",
+#    title = "Predicted Win Probability by Nomination Method and Gender"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 14)
+  )
+
+ggsave("interaction.png", plot = last_plot(),
+       width = 6, height = 4)
+
+
+# allocated to safer districts?
+
+feols(
+  vs_1_p ~ female + inc | party + congress,
+  data = election
+)
+
+feols(
+  vs_1_p ~ female * pri2 + inc | party + congress,
+  data = election
+)
+
+feols(
+  vs_1_p ~ female * pri2 | party + congress,
+  data = election %>% filter(inc == 0)
+)
+
+election %>%
+  group_by(female, pri2) %>%
+  summarise(
+    mean_vs = mean(vs_1_p, na.rm = TRUE),
+    se = sd(vs_1_p, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+plot_data <- election %>%
+  filter(!is.na(vs_1_p), !is.na(female), !is.na(pri2)) %>%
+  group_by(female, pri2) %>%
+  summarise(
+    mean_vs = mean(vs_1_p),
+    se = sd(vs_1_p) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Gender = ifelse(female == 1, "Women", "Men"),
+    Nomination = ifelse(pri2 == 1, "Primary", "Direct Nomination")
+  )
+
+ggplot(plot_data, aes(x = Nomination, y = mean_vs, color = Gender, group = Gender)) +
+  geom_point(size = 3, position = position_dodge(width = 0.2)) +
+  geom_line(position = position_dodge(width = 0.2)) +
+  geom_errorbar(
+    aes(ymin = mean_vs - 1.96 * se, ymax = mean_vs + 1.96 * se),
+    width = 0.1,
+    position = position_dodge(width = 0.2)
+  ) +
+  labs(
+    y = "Mean Prior District Vote Share",
+    x = "Nomination Method",
+    color = "",
+    title = "District Safety by Gender and Nomination Method"
+  ) +
+  theme_minimal(base_size = 12)
+
 
