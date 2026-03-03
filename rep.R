@@ -871,7 +871,9 @@ app_match <- read_excel("/Users/hyoon/Desktop/Yoon2/korea data/rep/app_match.xls
   mutate(win = ifelse(is.na(w_margin_1), 0, 1))
 
 # add gender of winner
-winner <- leg %>% filter(congress >= 19 & pr == 0) %>% select(congress, province, district, party, female) %>%
+# choose first obs for duplicates b/c second is 재보궐 winner from leg dataset
+winner <- leg %>% filter(congress >= 19 & pr == 0) %>% 
+  select(congress, province, district, party, female) %>%
   rename(fem_winner = female) %>% 
   mutate(party = case_when(congress == 19 & party %in% c("민주통합당", "더불어민주당") ~ "mp",
                            congress == 19 & party == "새누리당" ~ "ppp",
@@ -880,7 +882,11 @@ winner <- leg %>% filter(congress >= 19 & pr == 0) %>% select(congress, province
                            congress == 21 & party == "더불어민주당" ~ "mp",
                            congress == 21 & party %in% c("미래통합당","국민의힘") ~ "ppp",
                            TRUE ~ party)) %>%
-  rename(party_winner = party) %>% distinct()
+  rename(party_winner = party) %>% 
+  group_by(congress, province, district) %>% 
+  slice(1) %>% 
+  ungroup() %>%
+  select(congress, province, district, party_winner, fem_winner)
 
 election <- app_match %>% mutate(district_data = district_data |> 
                                    str_squish() |> 
@@ -999,6 +1005,24 @@ ggsave("election_winratebyparty.png", plot = last_plot(),
 # add characteristics of final nominee
 election <- election %>% left_join(dat2 %>% select(congress, province, district, party, nominee, female, age, incumbent, tenure_match),
                                    by=c("congress", "province", "district_data" = "district", "party")) 
+
+# save file
+#library(writexl)
+#write_xlsx(election, "election_data_export.xlsx")
+
+# filled in missing nominee, female, demographic data on election_data_export.xlsx
+# duplicates: 2020 종로구, 원주시갑, 성남시분당구갑, 안성시, 창원시의창구, 수성구을, 중구남구, 종로구, 전주시을, 청주시상당구
+# missing few districts (no nominees for ppp): 2020 세종갑/광주/전남/전북
+# added data on demographics of the final nominees by party
+
+election2 <- read_excel("election_data_export.xlsx") %>% 
+  group_by(congress, province, district_data, party) %>% 
+  slice(1) %>% 
+  ungroup() %>%
+  select(year, province, district_data, party, nominee,
+         female2, age2, incumbent2, tenure_match2) %>% 
+  right_join(election, by = c("year", "province", "district_data", "party", "nominee"))
+
 
 ##-----------------------------
 ### Descriptive Stats- where do they run
@@ -1205,203 +1229,1089 @@ election <- election %>% left_join(elec %>% select(congress, province, district,
 # margin comparison for primary v. non-primary
 election %>% filter(female == 1 & win == 1) %>% group_by(pri2) %>% summarize(avg = mean(w_margin))
 
-# save file
-library(writexl)
-write_xlsx(election, "election_data_export.xlsx")
 
 
-library(fixest)
+########################################
+######### MAIN RESULTS
+########################################
 
-main <- feols(win ~ pri2 + inc + vs_1_p + ruling | party + congress,
-  data = election,
-  cluster = ~district_data)
-summary(main)
+#####################
+## summary stats
+#####################
 
-main_int <- feols(win ~ female*pri2 + inc + vs_1_p + ruling | party + congress,
-                  data = election,
-                  cluster = ~district_data)
-summary(main_int)
-
-main_fem <- feols(win ~ pri2 + inc + vs_1_p + ruling | party + congress,
-                  data = election %>% filter(female == 1),
-                  cluster = ~district_data)
-summary(main_fem)
-
-library(modelsummary)
-
-dir.create("tables", showWarnings = FALSE)
-
-modelsummary(
-  list(
-    "(1) Baseline"    = main,
-    "(2) Female" = main_fem,
-    "(3) Interaction" = main_int
-  ),
-  estimate  = "{estimate}{stars}",
-  statistic = "({std.error})",
-  coef_map = c(
-    "pri2"          = "Primary",
-    "female"        = "Female",
-    "female:pri2"   = "Female × Primary",
-    "inc"           = "Incumbency",
-    "vs_1_p"        = "Previous Voteshare",
-    "ruling"        = "Ruling Party"
-  ),
-  gof_map = c("nobs", "r.squared"),
-  add_rows = data.frame(
-    term   = c("Party FE", "Congress FE"),
-    `(1) Baseline`    = c("Yes", "Yes"),
-    `(2) Female`    = c("Yes", "Yes"),
-    `(3) Interaction` = c("Yes", "Yes")
-  ),
-  notes = "Standard errors clustered at the District level.",
-  output = "tables/nomination_main_int.tex"
-)
-
-# summary stats
-
-election %>%
-  select(pri2, female, win, inc, vs_1_p, ruling) %>% 
+election2 %>%
+  select(year, win, pri2, female2, incumbent2, age2, tenure_match2) %>% 
   as.data.frame(.) %>% 
-  stargazer(.,  type = "latex",
-            title = "Summary Statistics",
-            header = F, float = T,
-            summary.stat = c("min","median", "max", "mean", "sd", "n"),
-            font.size = 'footnotesize', 
-            covariate.labels = c("Primary", "Female", "Win Election",
-                                 "Incumbency", "Vote Share (previous)", "Ruling Party"),
-            digits = 2,
-            out = "summary_stats.tex")
+  stargazer(.,
+            type = "latex",
+            float = FALSE,          # THIS is the correct argument to remove \begin{table}
+            summary = TRUE,
+            covariate.labels = c("Year", "Win General", "Primary", "Female",  
+                                 "Incumbent", "Age", "Tenure"),
+            digits = 3,
+            summary.stat = c("n", "mean", "sd", "min", "max"),
+            out = "/Users/hyoon/Desktop/dissertation/fem_summary.tex")
 
 
-## plot
+#####################
+## main results
+#####################
 
-dat <- election %>%
-  filter(
-    !is.na(win),
-    !is.na(female),
-    !is.na(pri2),
-    !is.na(inc),
-    !is.na(vs_1_p),
-    !is.na(ruling),
-    !is.na(party),
-    !is.na(congress)
-  )
+# library(fixest)
+# 
+# main <- feols(win ~ pri2 + inc + vs_1_p + tenure_match2 | party^congress,
+#   data = election2 %>% filter(!is.na(female2)),
+#   cluster = ~district_data)
+# 
+# main_int <- feols(win ~ pri2 + female2 + female2:pri2 + inc + vs_1_p + tenure_match2 | party^congress, 
+#                   data = election2, 
+#                   cluster = ~district_data)
+# 
+# main_fem <- feols(win ~ pri2 + inc + vs_1_p + tenure_match2 | party^congress,
+#                   data = election2 %>% filter(female2 == 1),
+#                   cluster = ~district_data)
+# 
+# var_dict = c(
+#   "female2" = "Female",
+#   "pri2" = "Primary",
+#   "female2:pri2" = "Primary $\\times$ Female",
+#   "pri2:female2" = "Primary $\\times$ Female", # Catches fixest's internal flip
+#   "inc" = "Incumbent",
+#   "vs_1_p" = "Prior Vote Share",
+#   "tenure_match2" = "Tenure"
+# )
+# 
+# etable(main, main_int, main_fem,
+#        tex = TRUE,
+#        file = "/Users/hyoon/Desktop/dissertation/main_result.tex",
+#        replace = TRUE,
+#        depvar = FALSE,
+#        headers = c("Main", "Interaction", "Women Only"),
+#        dict = var_dict,
+#        # THE FIX: The '%' forces etable to use the original variable names for sorting.
+#        # This absolutely guarantees: Primary -> Female -> Interaction
+#        order = c("%^pri2$", "%^female2$", "%female2:pri2", "%pri2:female2"),
+#        fitstat = c("n"),
+#        digits = 3
+# )
+# 
+# #####################
+# ## main result + district
+# #####################
+# 
+# main2 <- feols(win ~ pri2 + inc + vs_1_p + tenure_match2 | party^congress + district_data,
+#               data = election2 %>% filter(!is.na(female2)),
+#               cluster = ~district_data)
+# 
+# main_int2 <- feols(win ~ pri2 + female2 + female2:pri2 + inc + vs_1_p + tenure_match2 | party^congress + district_data, 
+#                   data = election2, 
+#                   cluster = ~district_data)
+# 
+# main_fem2 <- feols(win ~ pri2 + inc + vs_1_p + tenure_match2 | party^congress + district_data,
+#                   data = election2 %>% filter(female2 == 1),
+#                   cluster = ~district_data)
+# 
+# etable(main2, main_int2, main_fem2,
+#        tex = TRUE,
+#        file = "/Users/hyoon/Desktop/dissertation/main_result2.tex",
+#        replace = TRUE,
+#        depvar = FALSE,
+#        headers = c("Main", "Interaction", "Women Only"),
+#        dict = var_dict,
+#        # THE FIX: The '%' forces etable to use the original variable names for sorting.
+#        # This absolutely guarantees: Primary -> Female -> Interaction
+#        order = c("%^pri2$", "%^female2$", "%female2:pri2", "%pri2:female2"),
+#        fitstat = c("n"),
+#        digits = 3
+# )
 
-main_int_lm <- lm(
-  win ~ female * pri2 + inc + vs_1_p + ruling +
-    factor(party) + factor(congress),
-  data = dat)
+#####################
+## plot main results
+#####################
+# 
+# library(marginaleffects)
+# library(ggplot2)
+# library(tidyverse)
+# library(fixest)
+# 
+# # main
+# 
+# # 1. Define the Analytic Set
+# plot_dat <- election2 %>%
+#   drop_na(win, female2, pri2, inc, vs_1_p, tenure_match2, party, congress)
+# 
+# # 2. Run the Model
+# main_int <- feols(win ~ pri2 + female2 + female2:pri2 + inc + vs_1_p + tenure_match2 | party^congress,
+#                   data = plot_dat,
+#                   cluster = ~district_data)
+# 
+# # 3. Calculate Predicted Probabilities (The Levels)
+# preds <- predictions(main_int, 
+#                      newdata = datagrid(female2 = c(0, 1), pri2 = c(0, 1))) %>%
+#   as_tibble() %>%
+#   mutate(
+#     plot_type = ifelse(pri2 == 0, "Direct", "Primary"),
+#     sex_label = ifelse(female2 == 1, "Female", "Male")
+#   ) %>%
+#   select(sex_label, plot_type, estimate, conf.low, conf.high)
+# 
+# # 4. Calculate Marginal Effects (The Difference)
+# comps <- comparisons(main_int, 
+#                      variables = "pri2", 
+#                      by = "female2") %>%
+#   as_tibble() %>%
+#   mutate(
+#     plot_type = "Difference",
+#     sex_label = ifelse(female2 == 1, "Female", "Male")
+#   ) %>%
+#   select(sex_label, plot_type, estimate, conf.low, conf.high)
+# 
+# # 5. Combine the Data and Set the X-Axis Order
+# combined_plot_df <- bind_rows(preds, comps) %>%
+#   mutate(
+#     # This forces ggplot to strictly follow Direct > Primary > Difference
+#     plot_type = factor(plot_type, levels = c("Direct", "Primary", "Difference"))
+#   )
+# 
+# # 6. Generate the Plot with your specific aesthetics
+# ggplot(combined_plot_df, aes(x = plot_type, y = estimate, color = sex_label, shape = plot_type)) +
+#   # The Zero Line 
+#   geom_hline(yintercept = 0, linetype = "dotted") +
+#   
+#   # Points and Error Bars
+#   geom_point(size = 3) +
+#   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.12) +
+#   
+#   # The Two Panels
+#   facet_wrap(~ sex_label) +
+#   
+#   # Your Original Color Scheme
+#   scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+#   
+#   # Distinct shapes to separate probabilities from the penalty
+#   scale_shape_manual(values = c("Direct" = 16, 
+#                                 "Primary" = 16, 
+#                                 "Difference" = 18)) +
+#   
+#   # Clean Percentage Y-Axis
+#   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+#   
+#   labs(
+#     x = NULL, # Removes the x-axis title since the labels are self-explanatory
+#     y = "Marginal Effect"
+#   ) +
+#   
+#   # Your Original Theme Choices
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     legend.position = "none",
+#     strip.text = element_text(face = "bold", size = 14),
+#     axis.text.x = element_text(hjust = 0.5) # Centered text looks better when not angled
+#   )
+# 
+# ggsave("/Users/hyoon/Desktop/dissertation/fem_int.png", plot = last_plot(),
+#        width = 6, height = 4)
+# 
+# # with district FE
+# 
+# # 1. Define the Analytic Set
+# # (I remember you prefer defining your model sets cleanly and separately first!)
+# plot_dat_robust <- election2 %>%
+#   drop_na(win, female2, pri2, inc, vs_1_p, tenure_match2, party, congress, district_data)
+# 
+# # 2. Run the Robustness Model (Adding District FE)
+# main_int_robust <- feols(win ~ pri2 + female2 + female2:pri2 + inc + vs_1_p + tenure_match2 | party^congress + district_data,
+#                          data = plot_dat_robust,
+#                          cluster = ~district_data)
+# 
+# # 3. Calculate Predicted Probabilities (The Levels)
+# preds_robust <- predictions(main_int_robust, 
+#                             newdata = datagrid(female2 = c(0, 1), pri2 = c(0, 1))) %>%
+#   as_tibble() %>%
+#   mutate(
+#     plot_type = ifelse(pri2 == 0, "Direct", "Primary"),
+#     sex_label = ifelse(female2 == 1, "Female", "Male")
+#   ) %>%
+#   select(sex_label, plot_type, estimate, conf.low, conf.high)
+# 
+# # 4. Calculate Marginal Effects (The Difference)
+# comps_robust <- comparisons(main_int_robust, 
+#                             variables = "pri2", 
+#                             by = "female2") %>%
+#   as_tibble() %>%
+#   mutate(
+#     plot_type = "Difference",
+#     sex_label = ifelse(female2 == 1, "Female", "Male")
+#   ) %>%
+#   select(sex_label, plot_type, estimate, conf.low, conf.high)
+# 
+# # 5. Combine the Data and Set the X-Axis Order
+# combined_plot_df_robust <- bind_rows(preds_robust, comps_robust) %>%
+#   mutate(
+#     # This forces ggplot to strictly follow Direct > Primary > Difference
+#     plot_type = factor(plot_type, levels = c("Direct", "Primary", "Difference"))
+#   )
+# 
+# # 6. Generate the Plot with your specific aesthetics
+# ggplot(combined_plot_df_robust, aes(x = plot_type, y = estimate, color = sex_label, shape = plot_type)) +
+#   # The Zero Line 
+#   geom_hline(yintercept = 0, linetype = "dotted") +
+#   
+#   # Points and Error Bars
+#   geom_point(size = 3) +
+#   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.12) +
+#   
+#   # The Two Panels
+#   facet_wrap(~ sex_label) +
+#   
+#   # Your Original Color Scheme
+#   scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+#   
+#   # Distinct shapes to separate probabilities from the penalty
+#   scale_shape_manual(values = c("Direct" = 16, 
+#                                 "Primary" = 16, 
+#                                 "Difference" = 18)) +
+#   
+#   # Clean Percentage Y-Axis
+#   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+#   
+#   labs(
+#     x = NULL, # Removes the x-axis title since the labels are self-explanatory
+#     y = "Marginal Effect"
+#   ) +
+#   
+#   # Your Original Theme Choices
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     legend.position = "none",
+#     strip.text = element_text(face = "bold", size = 14),
+#     axis.text.x = element_text(hjust = 0.5) # Centered text looks better when not angled
+#   )
+# 
+# ggsave("/Users/hyoon/Desktop/dissertation/fem_int2.png", plot = last_plot(),
+#        width = 6, height = 4)
 
-cov_means <- dat %>%
-  summarise(
-    inc    = mean(inc,    na.rm = TRUE),
-    vs_1_p = mean(vs_1_p, na.rm = TRUE),
-    ruling = mean(ruling, na.rm = TRUE)
-  )
 
-ref_party    <- names(sort(table(dat$party), decreasing = TRUE))[1]
-ref_congress <- max(dat$congress, na.rm = TRUE)
 
-newdat <- expand.grid(
-  female = c(0, 1),
-  pri2   = c(0, 1)
-) %>%
-  bind_cols(cov_means[rep(1, 4), ]) %>%
+#####################
+## new analysis
+#####################
+
+# library(fixest)
+# library(dplyr)
+# library(ggplot2)
+# library(marginaleffects)
+# 
+# # ---------------------------------------------------------
+# # 1. H1: The Strategic Shield (Subsample: Direct Nomination Only)
+# # ---------------------------------------------------------
+# # Testing for gender parity when the party has centralized control.
+# # If H1 holds, 'female2' should be non-significant.
+# h1_shield <- feols(win ~ female2 + vs_1_p | party_year, 
+#                    data = filter(master_analytic_set, pri2 == 0),
+#                    cluster = ~district_data)
+# 
+# # ---------------------------------------------------------
+# # 2. H2: The Selection Trap (Main Interaction with Quality Controls)
+# # ---------------------------------------------------------
+# # Testing if the primary penalty persists even when controlling for 
+# # observable candidate quality (Age, Tenure, Incumbency).
+# h2_trap <- feols(win ~ female2 * pri2 + vs_1_p + incumbent2 + tenure_match2 + age2 | party_year, 
+#                  data = master_analytic_set,
+#                  cluster = ~district_data)
+# 
+# # this is sig
+# h2_trap2 <- feols(win ~ female2 * pri2 + incumbent2 + tenure_match2 | party_year, 
+#              data = master_analytic_set,
+#              cluster = ~district_data)
+# 
+# # ---------------------------------------------------------
+# # 3. ABM Mechanism: Incumbent vs. Newcomer Split
+# # ---------------------------------------------------------
+# # Testing the 'Uncertainty' logic. The gendered primary penalty 
+# # should be concentrated among those without an incumbency 'signal.'
+# 
+# # Model for Newcomers (Non-Incumbents)
+# h3_newcomers <- feols(win ~ female2 * pri2 + vs_1_p | party_year, 
+#                       data = filter(master_analytic_set, incumbent2 == 0),
+#                       cluster = ~district_data)
+# 
+# # Model for Incumbents
+# h3_incumbents <- feols(win ~ female2 * pri2 + vs_1_p | party_year, 
+#                        data = filter(master_analytic_set, incumbent2 == 1),
+#                        cluster = ~district_data)
+# 
+# # ---------------------------------------------------------
+# # 4. Consolidate and Generate Tables
+# # ---------------------------------------------------------
+# model_list <- list(
+#   "H1: Direct Only"  = h1_shield,
+#   "H2: Full Control" = h2_trap,
+#   "H3: Newcomers"    = h3_newcomers,
+#   "H3: Incumbents"   = h3_incumbents
+# )
+# 
+# etable(model_list, 
+#        headers = names(model_list),
+#        dict = c(female2 = "Female", pri2 = "Primary", "female2:pri2" = "Female x Primary"),
+#        order = c("Female", "Primary", "Female x Primary"),
+#        drop = "vs_1_p")
+# 
+# # Calculate the 'Effect of Primary' separately for Men and Women
+# primary_contrast <- comparisons(
+#   h2_trap2, 
+#   variables = "pri2", 
+#   by = "female2"
+# ) %>%
+#   as_tibble() %>%
+#   mutate(Gender = ifelse(female2 == 1, "Female", "Male"))
+# 
+# # Plot the contrast
+# ggplot(primary_contrast, aes(x = Gender, y = estimate, color = Gender)) +
+#   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+#   geom_point(size = 4) +
+#   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, size = 1) +
+#   scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+#   theme_minimal(base_size = 14) +
+#   labs(
+#     title = "Electoral Cost of Primary Nomination",
+#     subtitle = "Marginal Effect of Primary vs. Direct Nomination",
+#     y = "Change in Win Probability",
+#     x = ""
+#   ) +
+#   theme(legend.position = "none", plot.title = element_text(face = "bold"))
+
+
+# Setup and Libraries
+
+library(fixest)          
+library(dplyr)           
+library(marginaleffects) 
+library(ggplot2)         
+library(scales)
+
+# Define the Master Analytic Set
+# We filter for major party nominees and ensure quality proxies are non-missing
+master_analytic_set <- election2 %>%
+  filter(!is.na(nominee)) %>%
+  filter(party %in% c("mp", "ppp")) %>%
+  filter(!is.na(female2) & !is.na(pri2)) %>%
+  # Drop rows missing our key quality proxies
+  drop_na(age2, tenure_match2, incumbent2) %>%
   mutate(
-    party    = ref_party,
-    congress = ref_congress
+    # Create the interacted fixed effect for the regression
+    party_year = paste(party, congress, sep = "_")
   )
 
-pred <- predict(main_int_lm, newdata = newdat, se.fit = TRUE)
+# Split the analytic set to test the mechanism of Institutional Exposure
+data_newcomers <- master_analytic_set %>% filter(incumbent2 == 0)
+data_incumbents <- master_analytic_set %>% filter(incumbent2 == 1)
 
-plot_df <- newdat %>%
-  mutate(
-    fit  = pred$fit,
-    se   = pred$se.fit,
-    lwr  = fit - 1.96 * se,
-    upr  = fit + 1.96 * se,
-    sex_label = ifelse(female == 1, "Female", "Male"),
-    pri_label = ifelse(pri2 == 1, "Primary", "Direct nomination")
-  )
+# ---------------------------------------------------------
+# 3. Stage 1: The Selection Hurdle (Quality Models)
+# ---------------------------------------------------------
+# Proving that female primary survivors are at least as qualified as men
+# selection_models <- list(
+#   "Tenure"     = feols(tenure_match2 ~ female2 * pri2 + vs_1_p | party_year, 
+#                        data = master_analytic_set, cluster = ~district_data),
+#   "Age"        = feols(age2 ~ female2 * pri2 + vs_1_p | party_year, 
+#                        data = master_analytic_set, cluster = ~district_data),
+#   "Incumbency" = feols(incumbent2 ~ female2 * pri2 + vs_1_p | party_year, 
+#                        data = master_analytic_set, cluster = ~district_data)
+# )
+# 
+# feols(tenure_match2 ~ female2 * pri2 + vs_1_p | party_year, 
+#       data = master_analytic_set, cluster = ~district_data)
+# feols(incumbent2 ~ female2 * pri2 + vs_1_p | party_year, 
+#       data = master_analytic_set, cluster = ~district_data)
 
-ggplot(plot_df,
-       aes(x = pri_label, y = fit,
-           color = sex_label, group = sex_label)) +
-  geom_point(size = 3) +
-  geom_line(aes(group = 1)) +
-  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.12) +
-  geom_hline(yintercept = 0, linetype = "dotted") +
-  facet_wrap(~ sex_label) +
-  scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+# interaction positive, null
+
+# qual_ten <- feols(tenure_match2 ~ female2 * pri2 | party_year, 
+#       data = master_analytic_set, cluster = ~district_data)
+# qual_age <- feols(age2 ~ female2 * pri2 | party_year, 
+#                   data = master_analytic_set, cluster = ~district_data)
+# qual_inc <- feols(incumbent2 ~ female2 * pri2 | party_year, 
+#       data = master_analytic_set, cluster = ~district_data)
+
+
+# ---------------------------------------------------------
+# 1. Direct Nomination
+# ---------------------------------------------------------
+
+# H1: Direct Only (Verification of the Shield)
+# better
+h1_shield <- feols(win ~ female2 + incumbent2 + tenure_match2 + age2 | party_year, 
+      data = filter(master_analytic_set, pri2 == 0),
+      cluster = ~district_data)
+
+## linear predicted probability plot
+
+# 1. Run the plotting-safe model
+# Swapping the fixed effect for a factor to preserve the intercept variance
+h1_plot_model <- feols(win ~ female2 + factor(party_year), 
+                       data = filter(master_analytic_set, pri2 == 0),
+                       cluster = ~district_data)
+
+# 2. Calculate average predicted probabilities
+pred_h1 <- avg_predictions(h1_plot_model, by = "female2") %>%
+  as_tibble()
+
+# 3. Generate the Plot with a CI Ribbon (Band)
+ggplot(pred_h1, aes(x = female2, y = estimate)) +
+  # Add the CI Band (Ribbon)
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "steelblue", alpha = 0.2) +
+  
+  # Add the line connecting the estimates
+  geom_line(color = "black", linewidth = 0.5) +
+  
+  # Add the point estimates on top
+#  geom_point(color = "darkblue", size = 4) +
+  
+  # Format the axes
+  scale_x_continuous(breaks = c(0, 1), labels = c("Male", "Female")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  
+  # Clean up labels (no titles/subtitles to leave room for LaTeX captions)
   labs(
-    x = "Nomination method",
-    y = "Predicted probability of winning",
-    color = "Gender",
-#    title = "Predicted Win Probability by Nomination Method and Gender"
+    x = "",
+    y = "Predicted Probability"
   ) +
+  
+  # Apply a clean, publication-ready theme
   theme_minimal(base_size = 14) +
   theme(
-    legend.position = "none",
-    strip.text = element_text(face = "bold", size = 14)
+    axis.text.x = element_text(face = "bold", size = 13),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15)),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "gray90", fill = NA)
   )
 
-ggsave("interaction.png", plot = last_plot(),
+# diff plot (w marginal effect)
+
+# 1. Run the plotting-safe model
+h1_plot_model <- feols(win ~ female2 + + incumbent2 + tenure_match2 + age2 + factor(party_year), 
+                       data = filter(master_analytic_set, pri2 == 0),
+                       cluster = ~district_data)
+
+# 2. Extract Levels (Predicted Probabilities)
+pred_levels_h1 <- avg_predictions(h1_plot_model, by = "female2") %>%
+  as_tibble() %>%
+  mutate(Gender = ifelse(female2 == 1, "Female", "Male"),
+         x_cat = Gender) %>%
+  select(Gender, x_cat, estimate, conf.low, conf.high)
+
+# 3. Extract the Marginal Effect (The Shield/Difference)
+pred_diff_h1 <- avg_comparisons(h1_plot_model, variables = "female2") %>%
+  as_tibble() %>%
+  mutate(Gender = "Difference",
+         x_cat = "Difference") %>%
+  select(Gender, x_cat, estimate, conf.low, conf.high)
+
+# 4. Combine and Plot
+plot_data_h1 <- bind_rows(pred_levels_h1, pred_diff_h1) %>%
+  mutate(x_cat = factor(x_cat, levels = c("Male", "Female", "Difference")))
+
+ggplot(plot_data_h1, aes(x = x_cat, y = estimate, color = x_cat)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, linewidth = 1) +
+  scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred", "Difference" = "grey50")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(x = "", y = "Predicted Probability / Marginal Effect") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+
+ggsave("/Users/hyoon/Desktop/dissertation/shield.png", plot = last_plot(),
+      width = 6, height = 4)
+
+
+# table
+
+etable(h1_shield, 
+       tex = TRUE,
+       file = "/Users/hyoon/Desktop/dissertation/shield.tex",
+       replace = TRUE,
+       depvar = FALSE,
+       dict = c(female2 = "Female", win = "Win Probability",
+                incumbent2 = "Incumbent", tenure_match2 = "Tenure",
+                age2 = "Age"),
+       headers = list("Nomination" = "Direct Only"),
+       fitstat = c("n"),
+       digits = 3)
+
+# ---------------------------------------------------------
+# 2. Quality
+# ---------------------------------------------------------
+
+# Tenure Plotting Model
+qual_tenure_plot <- feols(tenure_match2 ~ female2 * pri2 + factor(party_year), 
+                          data = master_analytic_set, cluster = ~district_data)
+
+# Age Plotting Model
+qual_age_plot <- feols(age2 ~ female2 * pri2 + factor(party_year), 
+                       data = master_analytic_set, cluster = ~district_data)
+
+# Incumbency Plotting Model
+qual_inc_plot <- feols(incumbent2 ~ female2 * pri2 + factor(party_year), 
+                       data = master_analytic_set, cluster = ~district_data)
+
+# 1. Calculate Average Predicted Levels for Each Model
+# Using avg_predictions() instead of predictions() fixes the missing CI issue
+# by calculating the margins over the observed data distribution.
+
+pred_tenure <- avg_predictions(qual_tenure_plot, by = c("female2", "pri2")) %>%
+  as_tibble() %>% 
+  mutate(Outcome = "Tenure")
+
+pred_age <- avg_predictions(qual_age_plot, by = c("female2", "pri2")) %>%
+  as_tibble() %>% 
+  mutate(Outcome = "Age")
+
+pred_inc <- avg_predictions(qual_inc_plot, by = c("female2", "pri2")) %>%
+  as_tibble() %>% 
+  mutate(Outcome = "Incumbency")
+
+# 2. Combine and Clean Up Labels (Your original code remains the same!)
+qual_plot_df <- bind_rows(pred_tenure, pred_age, pred_inc) %>%
+  mutate(
+    plot_type = factor(ifelse(pri2 == 0, "Direct", "Primary"), levels = c("Direct", "Primary")),
+    sex_label = ifelse(female2 == 1, "Female", "Male"),
+    Outcome = factor(Outcome, levels = c("Incumbency", "Tenure", "Age"))
+  )
+
+pd <- position_dodge(width = 0.4)
+
+ggplot(qual_plot_df, aes(x = plot_type, y = estimate, color = sex_label)) +
+  # Points and error bars only (geom_line is completely removed)
+  geom_point(size = 4, position = pd) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.15, position = pd, linewidth = 0.8) +
+  
+  # The 3 panels, scaled independently
+  facet_wrap(~ Outcome, scales = "free_y") +
+  
+  # Your established color scheme
+  scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+  
+  # Adding distinct shapes makes it even easier to read without the lines
+  scale_shape_manual(values = c("Male" = 16, "Female" = 17)) + 
+  
+  labs(
+        x = "",
+        y = "Predicted Mean",
+    color = "Gender"
+  ) +
+  
+  # Clean, minimal theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "bottom", 
+    strip.text = element_text(face = "bold", size = 14),
+    strip.background = element_rect(fill = "gray90", color = NA),
+    axis.text.x = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave("/Users/hyoon/Desktop/dissertation/quality.png", plot = last_plot(),
+       width = 6, height = 4)
+
+# Combine results into a single table
+
+qual_tenure <- feols(tenure_match2 ~ female2 * pri2 | party^year, 
+                          data = master_analytic_set, cluster = ~district_data)
+
+# Age Plotting Model
+qual_age <- feols(age2 ~ female2 * pri2 | party^year, 
+                       data = master_analytic_set, cluster = ~district_data)
+
+# Incumbency Plotting Model
+qual_inc <- feols(incumbent2 ~ female2 * pri2 | party^year, 
+                       data = master_analytic_set, cluster = ~district_data)
+
+etable(qual_tenure, qual_age, qual_inc, 
+       tex = TRUE,
+       file = "/Users/hyoon/Desktop/dissertation/quality.tex",
+       replace = TRUE,
+       depvar = FALSE,
+       headers = c("Tenure", "Age", "Incumbency"),
+       dict = c(female2 = "Female", pri2 = "Primary"),
+       fitstat = c("n"),
+       digits = 3)
+
+
+# just show direct nomination
+
+# Filter to keep only Direct Nomination (pri2 == 0)
+direct_only_df <- qual_plot_df %>% 
+  filter(pri2 == 0)
+
+# Create the plot
+ggplot(direct_only_df, aes(x = sex_label, y = estimate, color = sex_label)) +
+  # Points and error bars
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1, linewidth = 1) +
+  
+  # Panels for each Quality metric
+  facet_wrap(~ Outcome, scales = "free_y") +
+  
+  # Established color scheme
+  scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+  
+  labs(
+#    title = "Candidate Quality under Direct Nomination",
+#    subtitle = "Comparing Female and Male Baseline Characteristics",
+    x = "",
+    y = "Predicted Mean Value",
+    color = "Gender"
+  ) +
+  
+  # Clean, minimal theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none", # Removed legend since X-axis labels handle it
+    strip.text = element_text(face = "bold", size = 14),
+    strip.background = element_rect(fill = "gray95", color = NA),
+    axis.text.x = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    panel.spacing = unit(2, "lines")
+  )
+
+# Save the focused plot
+ggsave("/Users/hyoon/Desktop/dissertation/quality_direct.png", 
+       width = 7, height = 4)
+
+
+# table
+
+qual_tenure_dir <- feols(tenure_match2 ~ female2 | party^year, 
+                         data = master_analytic_set[master_analytic_set$pri2 == 0, ], 
+                         cluster = ~district_data)
+
+qual_age_dir <- feols(age2 ~ female2 | party^year, 
+                      data = master_analytic_set[master_analytic_set$pri2 == 0, ], 
+                      cluster = ~district_data)
+
+qual_inc_dir <- feols(incumbent2 ~ female2 | party^year, 
+                      data = master_analytic_set[master_analytic_set$pri2 == 0, ], 
+                      cluster = ~district_data)
+
+# The fix: Simplify the etable call to ensure no 'missing' or 'extra' arguments
+etable(qual_tenure_dir, qual_age_dir, qual_inc_dir, 
+       tex = TRUE,
+       file = "/Users/hyoon/Desktop/dissertation/quality_direct.tex",
+       replace = TRUE,
+       # Explicitly label each model under the "Direct Nomination Only" umbrella
+       headers = list("Nomination" = "Direct Only"), 
+       dict = c(female2 = "Female", 
+                tenure_match2 = "Tenure Match", 
+                age2 = "Age", 
+                incumbent2 = "Incumbent"),
+       fitstat = ~ n,
+       digits = 3)
+
+# ---------------------------------------------------------
+# 3. Full
+# ---------------------------------------------------------
+
+# H2: Full Model with Quality Controls (Persistence of Penalty)
+h2_trap <- feols(win ~ female2 * pri2 + incumbent2 + tenure_match2 + age2 | 
+                   party_year, data = master_analytic_set, cluster = ~district_data)
+
+# by method
+# average marginal effect
+
+# 1. Use your plotting-safe version of h2_trap
+# (Ensure fixed effects are treated as + factor(party_year))
+h2_plot_model <- feols(win ~ female2 * pri2 + incumbent2 + tenure_match2 + age2 + 
+                         factor(party_year), 
+                       data = master_analytic_set, 
+                       cluster = ~district_data)
+
+# 2. Calculate the Marginal Effect of Gender for each Nomination Type
+h2_ame <- avg_comparisons(h2_plot_model, variables = "female2", by = "pri2") %>%
+  mutate(Nomination = ifelse(pri2 == 0, "Direct", "Primary"))
+
+# 3. Plot
+ggplot(h2_ame, aes(x = Nomination, y = estimate, color = Nomination)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, linewidth = 1.2) +
+  scale_color_manual(values = c("Direct" = "steelblue", "Primary" = "darkred")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(-0.4, 0.4)) +
+  labs(
+    x = "",
+    y = "Marginal Effect of Being Female"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none", axis.text.x = element_text(face = "bold"))
+
+ggsave("/Users/hyoon/Desktop/dissertation/ame.png", plot = last_plot(),
        width = 6, height = 4)
 
 
-# allocated to safer districts?
+# by gender difference - cross gender
 
-feols(
-  vs_1_p ~ female + inc | party + congress,
-  data = election
-)
+# 1. Run the Plotting Model for H2 (Full Model with covariates)
+# Using + factor(party_year) to preserve the intercept variance
+h2_plot_model <- feols(win ~ female2 * pri2 + incumbent2 + tenure_match2 + age2 + factor(party_year), 
+                       data = master_analytic_set, 
+                       cluster = ~district_data)
 
-feols(
-  vs_1_p ~ female * pri2 + inc | party + congress,
-  data = election
-)
+# 2. Extract Levels and Marginal Effects
+# Predicted Levels (Direct & Primary)
+pred_levels_h2 <- avg_predictions(h2_plot_model, by = c("female2", "pri2")) %>%
+  as_tibble() %>%
+  mutate(Gender = ifelse(female2 == 1, "Female", "Male"),
+         x_cat = ifelse(pri2 == 0, "Direct", "Primary")) %>%
+  select(Gender, x_cat, estimate, conf.low, conf.high)
 
-feols(
-  vs_1_p ~ female * pri2 | party + congress,
-  data = election %>% filter(inc == 0)
-)
+# Marginal Effects (Difference)
+pred_diff_h2 <- avg_comparisons(h2_plot_model, variables = "pri2", by = "female2", comparison = "difference") %>%
+  as_tibble() %>%
+  mutate(Gender = ifelse(female2 == 1, "Female", "Male"),
+         x_cat = "Difference") %>%
+  select(Gender, x_cat, estimate, conf.low, conf.high)
 
-election %>%
-  group_by(female, pri2) %>%
-  summarise(
-    mean_vs = mean(vs_1_p, na.rm = TRUE),
-    se = sd(vs_1_p, na.rm = TRUE) / sqrt(n()),
-    .groups = "drop"
+# Combine into Master Dataset
+data_h2_full <- bind_rows(pred_levels_h2, pred_diff_h2) %>%
+  mutate(Gender = factor(Gender, levels = c("Female", "Male")),
+         x_cat = factor(x_cat, levels = c("Direct", "Primary", "Difference")))
+
+# 3. Generate the Clean Plot (No Titles/Subtitles)
+ggplot(data_h2_full, aes(x = x_cat, y = estimate, color = Gender)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, linewidth = 1) +
+  facet_wrap(~ Gender) +
+  scale_color_manual(values = c("Female" = "darkred", "Male" = "steelblue")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  
+  # Removed title and subtitle arguments
+  labs(x = "", y = "Predicted Probability / Marginal Effect") +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 15),
+    axis.text.x = element_text(size = 12, color = "gray30"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "gray90", fill = NA)
   )
 
-plot_data <- election %>%
-  filter(!is.na(vs_1_p), !is.na(female), !is.na(pri2)) %>%
-  group_by(female, pri2) %>%
-  summarise(
-    mean_vs = mean(vs_1_p),
-    se = sd(vs_1_p) / sqrt(n()),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    Gender = ifelse(female == 1, "Women", "Men"),
-    Nomination = ifelse(pri2 == 1, "Primary", "Direct Nomination")
-  )
+ggsave("/Users/hyoon/Desktop/dissertation/full.png", plot = last_plot(),
+       width = 6, height = 4)
 
-ggplot(plot_data, aes(x = Nomination, y = mean_vs, color = Gender, group = Gender)) +
-  geom_point(size = 3, position = position_dodge(width = 0.2)) +
-  geom_line(position = position_dodge(width = 0.2)) +
-  geom_errorbar(
-    aes(ymin = mean_vs - 1.96 * se, ymax = mean_vs + 1.96 * se),
-    width = 0.1,
-    position = position_dodge(width = 0.2)
-  ) +
+# subsample (primary effect by gender)
+
+# 1. Run Separate Models for Women and Men
+# This isolates the 'Primary Effect' for each group
+mod_women <- feols(win ~ pri2 + incumbent2 + tenure_match2 + age2 | party_year, 
+                   data = filter(master_analytic_set, female2 == 1), 
+                   cluster = ~district_data)
+
+mod_men <- feols(win ~ pri2 + incumbent2 + tenure_match2 + age2 | party_year, 
+                 data = filter(master_analytic_set, female2 == 0), 
+                 cluster = ~district_data)
+
+# 2. Extract the Effect of the Primary for both
+eff_women <- avg_comparisons(mod_women, variables = "pri2") %>%
+  as_tibble() %>% mutate(Gender = "Women")
+
+eff_men <- avg_comparisons(mod_men, variables = "pri2") %>%
+  as_tibble() %>% mutate(Gender = "Men")
+
+# 3. Combine and Visualize
+subsample_df <- bind_rows(eff_women, eff_men)
+
+ggplot(subsample_df, aes(x = Gender, y = estimate, color = Gender)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 5) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, linewidth = 1.2) +
+  scale_color_manual(values = c("Women" = "darkred", "Men" = "steelblue")) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
   labs(
-    y = "Mean Prior District Vote Share",
-    x = "Nomination Method",
-    color = "",
-    title = "District Safety by Gender and Nomination Method"
+    x = "Candidate Group",
+    y = "Effect of Primary Election (vs. Direct)\non General Election Win Probability"
   ) +
-  theme_minimal(base_size = 12)
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none", axis.text.x = element_text(face = "bold"))
 
+# table
+
+h2_trap <- feols(win ~ female2 * pri2 + incumbent2 + tenure_match2 + age2 | party_year, 
+                 data = master_analytic_set, 
+                 cluster = ~district_data)
+
+list_h2 <- list("Full" = h2_trap)
+
+etable(list_h2,
+       tex = TRUE,
+       file = "/Users/hyoon/Desktop/dissertation/full.tex",
+       replace = TRUE,
+       depvar = FALSE,
+       headers = c("Interaction"),
+       dict = c(female2 = "Female", 
+                pri2 = "Primary", 
+                "female2:pri2" = "Female $\\times$ Primary",
+                incumbent2 = "Incumbent",
+                tenure_match2 = "Tenure",
+                age2 = "Age",
+                party_year = "Party-Year"),
+       fitstat = c("n"), 
+       digits = 3,
+       signif.code = c("***"=0.01, "**"=0.05, "*"=0.10))
+
+
+# ---------------------------------------------------------
+# 4. Incumbency
+# ---------------------------------------------------------
+
+# Newcomers (The Universal Hurdle)-primaries are costly in general
+h3_newcomers <- feols(win ~ female2 * pri2 | party_year, 
+                      data = data_newcomers, cluster = ~district_data)
+
+# Incumbents (The Selection Trap / Shield Stripping)
+h4_incumbents <- feols(win ~ female2 * pri2 + tenure_match2 + age2 | party_year, 
+                       data = data_incumbents, cluster = ~district_data)
+
+
+# one plot
+
+# 1. Extract effects for Newcomers (H3)
+# We use factor() for the fixed effects to ensure proper CI estimation
+mod_h3 <- feols(win ~ female2 * pri2 + factor(party_year), 
+                data = data_newcomers, cluster = ~district_data)
+
+ame_h3 <- avg_comparisons(mod_h3, variables = "female2", by = "pri2") %>%
+  as_tibble() %>%
+  mutate(Group = "Newcomers (H3: Universal Hurdle)")
+
+# 2. Extract effects for Incumbents (H4)
+mod_h4 <- feols(win ~ female2 * pri2 + + tenure_match2 + age2 + factor(party_year), 
+                data = data_incumbents, cluster = ~district_data)
+
+ame_h4 <- avg_comparisons(mod_h4, variables = "female2", by = "pri2") %>%
+  as_tibble() %>%
+  mutate(Group = "Incumbents (H4: Selection Trap)")
+
+# 3. Combine and Plot
+plot_df <- bind_rows(ame_h3, ame_h4) %>%
+  mutate(Nomination = ifelse(pri2 == 0, "Direct (Shield)", "Primary (Trap)"))
+
+ggplot(plot_df, aes(x = Nomination, y = estimate, color = Nomination)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, linewidth = 1) +
+  
+  # Facet by Newcomer vs Incumbent
+  facet_wrap(~ Group) +
+  
+  scale_color_manual(values = c("Direct (Shield)" = "steelblue", "Primary (Trap)" = "darkred")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(x = "", y = "Marginal Effect of Being Female\n(Win Probability relative to Men)") +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 12),
+    strip.background = element_rect(fill = "gray95", color = NA),
+    axis.text.x = element_text(face = "bold")
+  )
+
+# separate plot by incumbency status
+
+h3_plot_model <- feols(win ~ female2 * pri2 + factor(party_year), 
+                       data = data_newcomers, cluster = ~district_data)
+
+h4_plot_model <- feols(win ~ female2 * pri2 + tenure_match2 + age2 + factor(party_year), 
+                       data = data_incumbents, cluster = ~district_data)
+
+# This function calculates levels and differences for any model
+get_plot_data <- function(model) {
+  # A. Predicted Levels (Direct & Primary)
+  pred_levels <- avg_predictions(model, by = c("female2", "pri2")) %>%
+    as_tibble() %>%
+    mutate(Gender = ifelse(female2 == 1, "Female", "Male"),
+           x_cat = ifelse(pri2 == 0, "Direct", "Primary")) %>%
+    select(Gender, x_cat, estimate, conf.low, conf.high)
+  
+  # B. Marginal Effects (Difference)
+  pred_diff <- avg_comparisons(model, variables = "pri2", by = "female2", comparison = "difference") %>%
+    as_tibble() %>%
+    mutate(Gender = ifelse(female2 == 1, "Female", "Male"),
+           x_cat = "Difference") %>%
+    select(Gender, x_cat, estimate, conf.low, conf.high)
+  
+  # C. Combine
+  bind_rows(pred_levels, pred_diff) %>%
+    mutate(Gender = factor(Gender, levels = c("Female", "Male")),
+           x_cat = factor(x_cat, levels = c("Direct", "Primary", "Difference")))
+}
+
+# Extract data for H3 and H4
+data_h3 <- get_plot_data(h3_plot_model)
+data_h4 <- get_plot_data(h4_plot_model)
+
+make_trap_plot <- function(plot_data) {
+  ggplot(plot_data, aes(x = x_cat, y = estimate, color = Gender)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    geom_point(size = 4) +
+    geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2, linewidth = 1) +
+    facet_wrap(~ Gender) +
+    scale_color_manual(values = c("Female" = "darkred", "Male" = "steelblue")) +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    
+    # SOLUTION: Remove title and subtitle arguments here. 
+    # Only keep the axis labels.
+    labs(x = "", y = "Predicted Probability / Marginal Effect") +
+    
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position = "none",
+      strip.text = element_text(face = "bold", size = 15),
+      axis.text.x = element_text(size = 12, color = "gray30"),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(color = "gray90", fill = NA)
+    )
+}
+
+# Generate the clean plots:
+make_trap_plot(data_h3)
+
+ggsave("/Users/hyoon/Desktop/dissertation/newcomers.png", plot = last_plot(),
+       width = 6, height = 4)
+
+make_trap_plot(data_h4)
+
+ggsave("/Users/hyoon/Desktop/dissertation/inc.png", plot = last_plot(),
+       width = 6, height = 4)
+
+
+# table
+
+h3_newcomers <- feols(win ~ female2 * pri2 | party_year, 
+                      data = data_newcomers, cluster = ~district_data)
+
+h4_incumbents <- feols(win ~ female2 * pri2 + tenure_match2 + age2 | party_year, 
+                       data = data_incumbents, cluster = ~district_data)
+
+list_h3 <- list("Newcomers" = h3_newcomers)
+list_h4 <- list("Incumbents" = h4_incumbents)
+
+# Generate Table 1: H3 (Newcomers)
+etable(list_h3,
+       tex = TRUE,
+       file = "/Users/hyoon/Desktop/dissertation/newcomers.tex",
+       replace = TRUE,
+       depvar = FALSE,
+       dict = c(female2 = "Female", 
+                pri2 = "Primary", 
+                "female2:pri2" = "Female $\\times$ Primary",
+                party_year = "Party-Year"),
+       fitstat = c("n"),
+       digits = 3,
+       signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+       
+# Generate Table 2: H4 (Incumbents)
+etable(list_h4,
+       tex = TRUE,
+       file = "/Users/hyoon/Desktop/dissertation/inc.tex",
+       replace = TRUE,
+       depvar = FALSE,
+       headers = list("Sample" = "Incumbent Only"), 
+       dict = c(female2 = "Female", 
+                pri2 = "Primary", 
+                "female2:pri2" = "Female $\\times$ Primary",
+                tenure_match2 = "Tenure",
+                age2 = "Age"
+                party_year = "Party-Year"),
+       fitstat = c("n"),
+       digits = 3,
+       signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+
+
+
+###### compiled table
+etable(h1_shield, mod_women, list_h2, list_h4,
+       tex=TRUE,
+       file = "/Users/hyoon/Desktop/dissertation/combined.tex",
+       replace = TRUE,
+       depvar = FALSE,
+       headers = c("Direct Only", "Women Only", "Interaction", "Incumbents"),
+       dict = c(female2 = "Female", 
+                pri2 = "Primary", 
+                "female2:pri2" = "Female $\\times$ Primary",
+                party_year = "Party-Year"),
+       fitstat = c("n"),
+       digits = 3,
+       signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
+
+
+# ---------------------------------------------------------
+# 5. Summary Tables
+# ---------------------------------------------------------
+# Combine outcome models for comparison
+outcome_list <- list(
+  "H1: Direct Only"  = h1_shield,
+  "H2: Full Control" = h2_trap,
+  "H3: Newcomers"    = h3_newcomers,
+  "H4: Incumbents"   = h4_incumbents
+)
+
+etable(outcome_list, 
+       headers = names(outcome_list),
+       dict = c(female2 = "Female", pri2 = "Primary", 
+                "female2:pri2" = "Female x Primary"),
+       order = c("Female", "Primary", "Female x Primary"))
+
+# ---------------------------------------------------------
+# 6. Visualization: The "Wipeout" of the Incumbency Shield
+# ---------------------------------------------------------
+# Plotting predicted probabilities to visualize the 19-point drop
+pred_inc <- predictions(h4_incumbents, 
+                        newdata = datagrid(female2 = c(0, 1), pri2 = c(0, 1))) %>%
+  as_tibble() %>%
+  mutate(Gender = ifelse(female2 == 1, "Female", "Male"),
+         Nomination = ifelse(pri2 == 1, "Primary", "Direct"))
+
+ggplot(pred_inc, aes(x = Nomination, y = estimate, color = Gender, group = Gender)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.1) +
+  scale_color_manual(values = c("Male" = "steelblue", "Female" = "darkred")) +
+  theme_minimal(base_size = 14) +
+  labs(title = "The Incumbency Trap",
+       subtitle = "Predicted Win Probability for Incumbents",
+       y = "Pr(Win)", x = "Nomination Method") +
+  theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
+
+
+# quality check
+
+library(fixest)
+library(dplyr)
+
+# Stage 1: Do women clear a higher bar to get nominated?
+# We regress quality metrics on the interaction to see if primary survivors are "better."
+selection_quality <- list(
+  "Tenure"     = feols(tenure_match2 ~ female2 * pri2  | party_year, 
+                       data = master_analytic_set, cluster = ~district_data),
+  "Age"        = feols(age2 ~ female2 * pri2  | party_year, 
+                       data = master_analytic_set, cluster = ~district_data),
+  "Incumbency" = feols(incumbent2 ~ female2 * pri2  | party_year, 
+                       data = master_analytic_set, cluster = ~district_data)
+)
+
+# Generate the Selection Table
+etable(selection_quality, 
+       headers = c("Tenure", "Age", "Incumbency"),
+       dict = c(female2 = "Female", pri2 = "Primary", "female2:pri2" = "Female x Primary"))
 
