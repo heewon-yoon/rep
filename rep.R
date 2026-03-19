@@ -2229,7 +2229,7 @@ etable(list_h4,
                 pri2 = "Primary", 
                 "female2:pri2" = "Female $\\times$ Primary",
                 tenure_match2 = "Tenure",
-                age2 = "Age"
+                age2 = "Age",
                 party_year = "Party-Year"),
        fitstat = c("n"),
        digits = 3,
@@ -2315,3 +2315,133 @@ etable(selection_quality,
        headers = c("Tenure", "Age", "Incumbency"),
        dict = c(female2 = "Female", pri2 = "Primary", "female2:pri2" = "Female x Primary"))
 
+
+
+## additional comments
+
+
+# female2 ~ pri2
+
+feols(female2 ~ pri2 + age2 + tenure_match2 + incumbent2 | party_year, data = master_analytic_set, cluster = ~district_data)
+feols(female2 ~ pri2 + age2 + tenure_match2 + incumbent2 | party_year, data = master_analytic_set  %>% filter(party=="mp"), cluster = ~district_data)
+feols(female2 ~ pri2 + age2 + tenure_match2 + incumbent2 | party_year, data = master_analytic_set  %>% filter(party=="ppp"), cluster = ~district_data)
+
+feols(tenure_match2 ~ pri2 | party_year, data = master_analytic_set, cluster = ~district_data)
+feols(incumbent2 ~ pri2 | party_year, data = master_analytic_set, cluster = ~district_data)
+feols(age2 ~ pri2 | party_year, data = master_analytic_set, cluster = ~district_data)
+
+
+# summary stats by treatment
+
+master_analytic_set %>%
+  group_by(pri2) %>%  
+  summarise(
+    n = n(),
+    mean_female = mean(female2, na.rm = TRUE),
+    mean_age = mean(age2, na.rm = TRUE),
+    mean_tenure_match = mean(tenure_match2, na.rm = TRUE),
+    mean_incumbent = mean(incumbent2, na.rm = TRUE)
+  )
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# --- Pre-treatment covariates ---
+covariates <- c("female2", "age2", "tenure_match2", "incumbent2")
+
+# --- Compute means by treatment ---
+means <- master_analytic_set %>%
+  group_by(pri2) %>%
+  summarise(across(all_of(covariates), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+
+# --- Compute pooled SDs ---
+sds <- master_analytic_set %>%
+  summarise(across(all_of(covariates), ~ sd(.x, na.rm = TRUE)))
+
+# --- Compute standardized differences ---
+std_diff <- means %>%
+  pivot_longer(-pri2, names_to = "covariate", values_to = "mean") %>%
+  pivot_wider(names_from = pri2, values_from = mean) %>%
+  mutate(
+    std_diff = case_when(
+      covariate == "female2" ~ (`1` - `0`)/sds$female2,
+      covariate == "age2" ~ (`1` - `0`)/sds$age2,
+      covariate == "tenure_match2" ~ (`1` - `0`)/sds$tenure_match2,
+      covariate == "incumbent2" ~ (`1` - `0`)/sds$incumbent2
+    )
+  )
+
+# --- Covariate balance plot ---
+ggplot(std_diff, aes(x = std_diff, y = covariate)) +
+  geom_point(size = 3, color = "blue") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = c(-0.1, 0.1), linetype = "dotted", color = "red") +
+  labs(
+    x = "Standardized Difference (Primary = 1 vs 0)",
+    y = "Covariate",
+    title = "Covariate Balance by Selection Method (pri2)"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+# plotting
+
+library(broom)
+
+m_all <- feols(female2 ~ pri2 + age2 + tenure_match2 + incumbent2 | party_year, data = master_analytic_set, cluster = ~district_data)
+m_mp <- feols(female2 ~ pri2 + age2 + tenure_match2 + incumbent2 | party_year, data = master_analytic_set  %>% filter(party=="mp"), cluster = ~district_data)
+m_ppp <- feols(female2 ~ pri2 + age2 + tenure_match2 + incumbent2 | party_year, data = master_analytic_set  %>% filter(party=="ppp"), cluster = ~district_data)
+
+results <- bind_rows(
+  tidy(m_all) %>% mutate(model = "Pooled"),
+  tidy(m_mp) %>% mutate(model = "MP"),
+  tidy(m_ppp) %>% mutate(model = "PPP")
+) %>%
+  filter(term == "pri2")
+
+results$model <- factor(results$model, levels = c("Pooled", "MP", "PPP"))
+
+ggplot(results, aes(x = model, y = estimate, color = model)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = estimate - 1.96*std.error,
+                    ymax = estimate + 1.96*std.error),
+                width = .1) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = c(
+    "Pooled" = "black",
+    "MP" = "#2C7BB6",   # blue
+    "PPP" = "#D7191C"   # red
+  )) +
+  labs(
+    x = "",
+    y = "",
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggsave("/Users/hyoon/Desktop/dissertation/selection.png", plot = last_plot(),
+       width = 6, height = 4)
+
+etable(
+  list("Pooled" = m_all,
+       "MP" = m_mp,
+       "PPP" = m_ppp),
+  tex = TRUE,
+  file = "/Users/hyoon/Desktop/dissertation/selection.tex",
+  replace = TRUE,
+  depvar = FALSE,
+  headers = list("Sample" = c("Pooled", "MP", "PPP")),
+  dict = c(
+    pri2 = "Primary",
+    age2 = "Age",
+    tenure_match2 = "Tenure",
+    incumbent2 = "Incumbent",
+    female2 = "Female",
+    party_year = "Party-Year"
+  ),
+  fitstat = c("n"),
+  digits = 3,
+  signif.code = c("***"=0.01, "**"=0.05, "*"=0.10)
+)
